@@ -1,0 +1,8 @@
+node_modules
+*.log
+.env.local
+.env.*.local
+uploads/*
+retromail/uploads/*
+!uploads/.gitkeep
+!retromail/uploads/.gitkeep

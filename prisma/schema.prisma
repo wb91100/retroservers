@@ -1,0 +1,466 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"  // ✅ PAS sqlite
+  url      = env("DATABASE_URL")
+}
+
+model Vehicle {
+  id                Int       @id @default(autoincrement())
+  parc              String    @unique
+  type              String
+  modele            String
+  marque            String?
+  subtitle          String?
+  immat             String?
+  etat              String
+  miseEnCirculation DateTime?
+  energie           String?
+  description       String?
+  history           String?
+  caracteristiques  String?
+  gallery           String?
+  backgroundImage   String?
+  backgroundPosition String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  usages  Usage[]
+  reports Report[]
+  events  Event[]   @relation("EventVehicle")
+}
+
+model Usage {
+  id           Int       @id @default(autoincrement())
+  parc         String
+  startedAt    DateTime
+  endedAt      DateTime?
+  conducteur   String?
+  participants String?
+  note         String?
+  relatedTo    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  vehicle Vehicle @relation(fields: [parc], references: [parc], onDelete: Cascade)
+  reports Report[]
+}
+
+model Report {
+  id         Int      @id @default(autoincrement())
+  parc       String
+  usageId    Int?
+  description String?
+  filesMeta  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  vehicle Vehicle @relation(fields: [parc], references: [parc], onDelete: Cascade)
+  usage   Usage?  @relation(fields: [usageId], references: [id], onDelete: SetNull)
+}
+
+model Flash {
+  id        Int      @id @default(autoincrement())
+  content   String
+  type      String   @default("info")
+  active    Boolean  @default(true)
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Event {
+  id           String      @id
+  title        String
+  date         DateTime
+  time         String?
+  location     String?
+  description  String?
+  helloAssoUrl String?
+  adultPrice   Float?
+  childPrice   Float?
+  vehicleId    String?
+  status       EventStatus @default(DRAFT)
+  layout       String?
+  extras       String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relations
+  vehicle       Vehicle?            @relation("EventVehicle", fields: [vehicleId], references: [parc])
+  registrations EventRegistration[]
+}
+
+model EventRegistration {
+  id                  String   @id @default(cuid())
+  eventId             String
+  participantName     String
+  participantEmail    String
+  adultTickets        Int      @default(1)
+  childTickets        Int      @default(0)
+  totalAmount         Float
+  paymentMethod       String   @default("helloasso")
+  helloAssoStatus     String   @default("PENDING")
+  helloAssoOrderId    String?
+  qrCodeData          String?
+  ticketSent          Boolean  @default(false)
+  registrationDate    DateTime @default(now())
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([participantEmail])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  status    String   @default("CONFIRMED")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NewsletterCampaign {
+  id          String   @id @default(cuid())
+  title       String
+  subject     String
+  content     String
+  status      String   @default("DRAFT")
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  recipientCount Int?
+  successCount   Int?
+  failureCount   Int?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum MembershipType {
+  STANDARD
+  FAMILY
+  STUDENT
+  HONORARY
+  LIFETIME
+}
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  CANCELLED
+}
+
+enum MemberRole {
+  MEMBER
+  DRIVER
+  ADMIN
+  BUREAU
+}
+
+enum DocumentType {
+  DRIVING_LICENSE
+  IDENTITY_CARD
+  INSURANCE_RECORD
+  MEMBERSHIP_FORM
+  MEDICAL_CERTIFICATE
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model SiteUser {
+  id                String   @id @default(cuid())
+  username          String   @unique
+  firstName         String
+  lastName          String
+  email             String   @unique
+  password          String   // Hash bcrypt
+  
+  // Rôle et permissions
+  role              String   @default("MEMBER") // ADMIN, MODERATOR, MEMBER, GUEST
+  hasInternalAccess Boolean  @default(false)
+  hasExternalAccess Boolean  @default(false)
+  
+  // État du compte
+  isActive          Boolean  @default(true)
+  mustChangePassword Boolean @default(false)
+  lastLoginAt       DateTime?
+  
+  // Liaison avec adhésion
+  linkedMemberId    String?  @unique
+  linkedMember      Member?  @relation(fields: [linkedMemberId], references: [id], onDelete: SetNull)
+  
+  // Métadonnées
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  createdBy         String?
+
+  // Relations
+  accessLogs        AccessLog[]
+
+  @@map("site_users")
+}
+
+model AccessLog {
+  id          String   @id @default(cuid())
+  siteUserId  String?
+  action      String   // LOGIN_SUCCESS, LOGIN_FAILED, ACCOUNT_CREATED, ACCOUNT_ACTIVATED, etc.
+  success     Boolean  @default(true)
+  ipAddress   String
+  userAgent   String?
+  performedBy String?  // Qui a effectué l'action
+  details     String?
+  timestamp   DateTime @default(now())
+  
+  // Relations
+  siteUser    SiteUser? @relation(fields: [siteUserId], references: [id], onDelete: Cascade)
+
+  @@map("access_logs")
+}
+
+model Member {
+  id                    String   @id @default(cuid())
+  firstName             String
+  lastName              String
+  email                 String   @unique
+  phone                 String?
+  address               String?
+  city                  String?
+  postalCode            String?
+  birthDate             DateTime?
+  
+  // Adhésion
+  memberNumber          String?   @unique
+  membershipType        String    @default("STANDARD")
+  membershipStatus      String    @default("PENDING")
+  membershipStartDate   DateTime?
+  membershipEndDate     DateTime?
+  paymentAmount         Float?
+  paymentMethod         String?
+  
+  // Liaison avec accès site
+  hasLinkedAccess       Boolean   @default(false)
+  linkedSiteUser        SiteUser?
+  
+  // Métadonnées
+  newsletter            Boolean   @default(true)
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  createdBy             String?
+
+  // Relations
+  documents             Document[]
+
+  @@map("members")
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  memberId      String
+  type          DocumentType
+  fileName      String
+  filePath      String
+  fileSize      Int?
+  mimeType      String?
+  expiryDate    DateTime?
+  status        DocumentStatus @default(PENDING)
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  reviewNotes   String?
+  uploadedAt    DateTime @default(now())
+
+  // Relations
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([type])
+  @@index([status])
+  @@index([expiryDate])
+}
+
+model Changelog {
+  id        Int      @id @default(autoincrement())
+  title     String
+  version   String
+  date      DateTime @default(now())
+  changes   String   // JSON.stringify(string[])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------- Stock Management ----------
+
+enum StockStatus {
+  AVAILABLE
+  LOW_STOCK
+  OUT_OF_STOCK
+  DISCONTINUED
+  RESERVED
+}
+
+enum StockCategory {
+  PIECES_DETACHEES
+  CONSOMMABLES
+  OUTILLAGE
+  EQUIPEMENT
+  DOCUMENTATION
+  MERCHANDISING
+  FOURNITURES
+  SECURITE
+  GENERAL
+}
+
+enum StockUnit {
+  PIECE
+  KG
+  LITRE
+  METRE
+  PAQUET
+  BOITE
+  ROULEAU
+  SET
+  AUTRE
+}
+
+enum MovementType {
+  IN          // Entrée (achat, retour, don)
+  OUT         // Sortie (utilisation, vente, perte)
+  ADJUSTMENT  // Correction d'inventaire
+}
+
+model Stock {
+  id              Int           @id @default(autoincrement())
+  reference       String?       @unique // Référence interne
+  barcode         String?       // Code-barres
+  name            String        // Nom de l'article
+  description     String?       // Description détaillée
+  category        StockCategory @default(GENERAL)
+  subcategory     String?       // Sous-catégorie libre
+  
+  // Quantités
+  quantity        Int           @default(0)
+  minQuantity     Int           @default(0) // Seuil d'alerte stock bas
+  unit            StockUnit     @default(PIECE)
+  
+  // Localisation et fournisseur
+  location        String?       // Emplacement physique
+  supplier        String?       // Fournisseur principal
+  
+  // Prix
+  purchasePrice   Float?        // Prix d'achat unitaire
+  salePrice       Float?        // Prix de vente unitaire
+  
+  // État et dates
+  status          StockStatus   @default(AVAILABLE)
+  lastRestockDate DateTime?     // Dernière date de réapprovisionnement
+  expiryDate      DateTime?     // Date d'expiration si applicable
+  
+  // Métadonnées
+  notes           String?       // Notes diverses
+  createdBy       String        // Utilisateur créateur
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // Relations
+  movements       StockMovement[]
+  
+  @@index([category])
+  @@index([status])
+  @@index([quantity])
+  @@index([name])
+}
+
+model StockMovement {
+  id               Int          @id @default(autoincrement())
+  stockId          Int
+  type             MovementType
+  quantity         Int          // Quantité du mouvement
+  previousQuantity Int          // Quantité avant le mouvement
+  newQuantity      Int          // Quantité après le mouvement
+  reason           String?      // Raison du mouvement
+  notes            String?      // Notes sur le mouvement
+  userId           String       // Utilisateur qui a effectué le mouvement
+  createdAt        DateTime     @default(now())
+  
+  // Relations
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  
+  @@index([stockId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model ScheduledOperation {
+  id          String    @id @default(cuid())
+  type        String    // 'recette' ou 'depense'
+  description String
+  amount      Float
+  dueDate     DateTime? // Optionnel - peut être null
+  category    String?
+  recurring   String    @default("none") // 'none', 'monthly', 'quarterly', 'yearly'
+  notes       String?
+  isExecuted  Boolean   @default(false)
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now())
+
+  @@map("scheduled_operations")
+}
+
+model RetroReport {
+  id              String   @id @default(cuid())
+  title           String
+  description     String
+  category        String?
+  type            String   @default("bug")      // bug | task | improvement ...
+  priority        String   @default("medium")   // low | medium | high | critical
+  status          String   @default("open")     // open | in_progress | resolved | closed
+  createdBy       String
+  createdByUserId String?                        // id de SiteUser (JWT sub) si dispo
+  assignedTo      String?
+  attachments     String?                        // JSON.stringify(FileMeta[])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  comments        RetroReportComment[]
+
+  @@map("retro_reports")
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model RetroReportComment {
+  id        String      @id @default(cuid())
+  reportId  String
+  author    String
+  message   String
+  createdAt DateTime    @default(now())
+
+  report    RetroReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("retro_report_comments")
+  @@index([reportId])
+  @@index([createdAt])
+}
