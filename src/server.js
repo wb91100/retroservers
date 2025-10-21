@@ -1975,820 +1975,434 @@ app.get('/admin/retro-reports/debug', requireAuth, async (req, res) => {
 
 // ========== FIN ENDPOINTS RETROREPORTS RAILWAY ==========
 
-// Ajouter ces endpoints pour le changelog (juste avant app.listen) :
+// Ajouter ces endpoints après les endpoints existants (vers la ligne 2500)
 
-// ========== ENDPOINTS CHANGELOG ==========
+// ========== ENDPOINTS MEMBRES (CRUD) ==========
 
-// GET - Récupérer tous les changelogs (pour l'externe)
-app.get('/changelog', async (req, res) => {
-  try {
-    // Pour l'instant, on utilise un fichier JSON. Plus tard on peut migrer vers la DB
-    const changelogPath = path.join(process.cwd(), 'data', 'changelog.json');
+// Transformer un membre pour la réponse API
+function transformMember(member) {
+  if (!member) return null;
+  
+  return {
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    email: member.email,
+    phone: member.phone,
+    address: member.address,
+    city: member.city,
+    postalCode: member.postalCode,
+    birthDate: member.birthDate,
     
-    try {
-      const data = await fs.readFile(changelogPath, 'utf-8');
-      const changelog = JSON.parse(data);
-      res.json(changelog);
-    } catch (err) {
-      // Si le fichier n'existe pas, retourner un changelog vide
-      res.json({ entries: [] });
+    // Adhésion
+    membershipType: member.membershipType,
+    membershipStatus: member.membershipStatus,
+    joinDate: member.joinDate,
+    renewalDate: member.renewalDate,
+    paymentAmount: member.paymentAmount,
+    paymentMethod: member.paymentMethod,
+    
+    // Rôles et accès
+    role: member.role,
+    hasExternalAccess: member.hasExternalAccess,
+    hasInternalAccess: member.hasInternalAccess,
+    newsletter: member.newsletter,
+    
+    // MyRBE
+    matricule: member.matricule,
+    loginEnabled: member.loginEnabled,
+    temporaryPassword: member.temporaryPassword,
+    mustChangePassword: member.mustChangePassword,
+    lastLoginAt: member.lastLoginAt,
+    
+    // Conduite
+    driverLicense: member.driverLicense,
+    licenseExpiryDate: member.licenseExpiryDate,
+    medicalCertificateDate: member.medicalCertificateDate,
+    emergencyContact: member.emergencyContact,
+    emergencyPhone: member.emergencyPhone,
+    driverCertifications: parseJsonField(member.driverCertifications) || [],
+    vehicleAuthorizations: parseJsonField(member.vehicleAuthorizations) || [],
+    maxPassengers: member.maxPassengers,
+    driverNotes: member.driverNotes,
+    
+    // Divers
+    notes: member.notes,
+    createdAt: member.createdAt,
+    updatedAt: member.updatedAt
+  };
+}
+
+// GET /api/members - Lister tous les membres
+app.get('/api/members', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('📋 Récupération liste des membres');
+    
+    const { status, limit, search } = req.query;
+    
+    const where = {};
+    if (status && status !== 'ALL') {
+      where.membershipStatus = status;
     }
-  } catch (error) {
-    console.error('Erreur récupération changelog:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// POST - Sauvegarder le changelog (depuis l'interne)
-app.post('/admin/changelog', requireAuth, async (req, res) => {
-  try {
-    const { entries } = req.body;
     
-    const changelogData = {
-      entries,
-      lastUpdated: new Date().toISOString(),
-      updatedBy: req.user?.email || 'system'
+    if (search) {
+      const searchTerm = search.trim();
+      where.OR = [
+        { firstName: { contains: searchTerm, mode: 'insensitive' } },
+        { lastName: { contains: searchTerm, mode: 'insensitive' } },
+        { email: { contains: searchTerm, mode: 'insensitive' } },
+        { matricule: { contains: searchTerm, mode: 'insensitive' } }
+      ];
+    }
+    
+    const options = {
+      where,
+      orderBy: { createdAt: 'desc' }
     };
     
-    // Créer le dossier data s'il n'existe pas
-    const dataDir = path.join(process.cwd(), 'data');
-    try {
-      await fs.mkdir(dataDir, { recursive: true });
-    } catch (err) {
-      // Le dossier existe déjà
+    if (limit) {
+      options.take = parseInt(limit, 10);
     }
     
-    // Sauvegarder dans le fichier JSON
-    const changelogPath = path.join(dataDir, 'changelog.json');
-    await fs.writeFile(changelogPath, JSON.stringify(changelogData, null, 2));
+    const members = await prisma.member.findMany(options);
     
-    console.log('✅ Changelog sauvegardé:', entries.length, 'entrées');
-    res.json({ success: true, message: 'Changelog sauvegardé avec succès' });
+    console.log(`✅ ${members.length} membres récupérés`);
+    res.json({
+      members: members.map(transformMember),
+      total: members.length
+    });
     
   } catch (error) {
-    console.error('Erreur sauvegarde changelog:', error);
-    res.status(500).json({ error: 'Erreur serveur lors de la sauvegarde' });
+    console.error('❌ Erreur récupération membres:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la récupération des membres',
+      message: error.message 
+    });
   }
 });
 
-// GET - Récupérer le changelog pour l'admin (avec métadonnées)
-app.get('/admin/changelog', requireAuth, async (req, res) => {
-  try {
-    const changelogPath = path.join(process.cwd(), 'data', 'changelog.json');
-    
-    try {
-      const data = await fs.readFile(changelogPath, 'utf-8');
-      const changelog = JSON.parse(data);
-      res.json(changelog);
-    } catch (err) {
-      // Si le fichier n'existe pas, retourner des données par défaut
-      const defaultChangelog = {
-        entries: [
-          {
-            id: 1,
-            version: '2.1.0',
-            date: '2025-10-18',
-            type: 'feature',
-            title: "Système RétroReports",
-            description: "Ajout du système de tickets pour le suivi des incidents et améliorations",
-            author: 'Équipe Dev'
-          },
-          {
-            id: 2,
-            version: '2.0.5',
-            date: '2025-10-15',
-            type: 'fix',
-            title: 'Correction gestion membres',
-            description: "Résolution des problèmes de performance sur la page de gestion des membres",
-            author: 'W. Belaidi'
-          }
-        ],
-        lastUpdated: new Date().toISOString(),
-        updatedBy: 'system'
-      };
-      res.json(defaultChangelog);
-    }
-  } catch (error) {
-    console.error('Erreur récupération changelog admin:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// ========== FIN ENDPOINTS CHANGELOG ==========
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
-});
-
-// === ENDPOINTS POUR GESTION MEMBRES ET CONNEXIONS ===
-
-// Activer/désactiver l'accès MyRBE pour un membre
-app.post('/api/members/:id/toggle-login', requireAuth, async (req, res) => {
+// GET /api/members/:id - Récupérer un membre par ID
+app.get('/api/members/:id', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
-  
   try {
     const { id } = req.params;
-    const { action } = req.body; // 'enable' ou 'disable'
     
-    const member = await prisma.member.findUnique({ where: { id } });
+    const member = await prisma.member.findUnique({
+      where: { id }
+    });
+    
     if (!member) {
       return res.status(404).json({ error: 'Membre non trouvé' });
     }
-
-    if (action === 'enable') {
-      // Générer matricule et mot de passe temporaire
-      const year = new Date().getFullYear();
-      const random = Math.floor(Math.random() * 900) + 100;
-      const matricule = member.matricule || `${year}-${random}`;
-      const tempPassword = Math.random().toString(36).slice(-8).toUpperCase();
-      
-      const updatedMember = await prisma.member.update({
-        where: { id },
-        data: {
-          matricule,
-          loginEnabled: true,
-          temporaryPassword: tempPassword,
-          mustChangePassword: true,
-          loginAttempts: 0,
-          lockedUntil: null
-        }
-      });
-
-      // Log de l'action
-      await prisma.connectionLog.create({
-        data: {
-          memberId: id,
-          type: 'ACCOUNT_ENABLED',
-          success: true,
-          ipAddress: req.ip || 'unknown',
-          userAgent: req.headers['user-agent'] || 'unknown',
-          details: `Accès MyRBE activé par ${req.user?.email || 'admin'}`
-        }
-      });
-
-      res.json({ 
-        success: true, 
-        member: updatedMember,
-        temporaryPassword: tempPassword 
-      });
-
-    } else if (action === 'disable') {
-      const updatedMember = await prisma.member.update({
-        where: { id },
-        data: {
-          loginEnabled: false,
-          temporaryPassword: null,
-          mustChangePassword: false
-        }
-      });
-
-      // Log de l'action
-      await prisma.connectionLog.create({
-        data: {
-          memberId: id,
-          type: 'ACCOUNT_DISABLED',
-          success: true,
-          ipAddress: req.ip || 'unknown',
-          userAgent: req.headers['user-agent'] || 'unknown',
-          details: `Accès MyRBE désactivé par ${req.user?.email || 'admin'}`
-        }
-      });
-
-      res.json({ success: true, member: updatedMember });
-
-    } else {
-      res.status(400).json({ error: 'Action non valide' });
-    }
-
+    
+    res.json({
+      member: transformMember(member)
+    });
+    
   } catch (error) {
-    console.error('Erreur toggle login:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
+    console.error('❌ Erreur récupération membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la récupération du membre',
+      message: error.message 
+    });
   }
 });
 
-// Réinitialiser le mot de passe d'un membre
+// POST /api/members - Créer un nouveau membre
+app.post('/api/members', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('👤 Création nouveau membre:', req.body);
+    
+    const {
+      firstName, lastName, email, phone, address, city, postalCode, birthDate,
+      membershipType, membershipStatus, joinDate, renewalDate, paymentAmount, paymentMethod,
+      role, hasExternalAccess, hasInternalAccess, newsletter,
+      matricule, loginEnabled, temporaryPassword, mustChangePassword,
+      driverLicense, licenseExpiryDate, medicalCertificateDate,
+      emergencyContact, emergencyPhone, driverCertifications, vehicleAuthorizations,
+      maxPassengers, driverNotes, notes
+    } = req.body;
+    
+    // Validation des champs requis
+    if (!firstName || !lastName || !email) {
+      return res.status(400).json({ 
+        error: 'Prénom, nom et email sont requis' 
+      });
+    }
+    
+    // Vérifier unicité de l'email
+    const existingEmail = await prisma.member.findFirst({
+      where: { email }
+    });
+    
+    if (existingEmail) {
+      return res.status(400).json({ 
+        error: 'Un membre avec cet email existe déjà' 
+      });
+    }
+    
+    // Vérifier unicité du matricule si fourni
+    if (matricule) {
+      const existingMatricule = await prisma.member.findFirst({
+        where: { matricule }
+      });
+      
+      if (existingMatricule) {
+        return res.status(400).json({ 
+          error: 'Un membre avec ce matricule existe déjà' 
+        });
+      }
+    }
+    
+    // Créer le membre
+    const memberData = {
+      firstName,
+      lastName,
+      email,
+      phone,
+      address,
+      city,
+      postalCode,
+      birthDate: birthDate ? new Date(birthDate) : null,
+      
+      membershipType: membershipType || 'STANDARD',
+      membershipStatus: membershipStatus || 'PENDING',
+      joinDate: joinDate ? new Date(joinDate) : new Date(),
+      renewalDate: renewalDate ? new Date(renewalDate) : null,
+      paymentAmount: paymentAmount ? parseFloat(paymentAmount) : null,
+      paymentMethod: paymentMethod || 'HELLOASSO',
+      
+      role: role || 'MEMBER',
+      hasExternalAccess: !!hasExternalAccess,
+      hasInternalAccess: !!hasInternalAccess,
+      newsletter: newsletter !== false,
+      
+      matricule,
+      loginEnabled: !!loginEnabled,
+      temporaryPassword,
+      mustChangePassword: !!mustChangePassword,
+      
+      driverLicense,
+      licenseExpiryDate: licenseExpiryDate ? new Date(licenseExpiryDate) : null,
+      medicalCertificateDate: medicalCertificateDate ? new Date(medicalCertificateDate) : null,
+      emergencyContact,
+      emergencyPhone,
+      driverCertifications: stringifyJsonField(driverCertifications),
+      vehicleAuthorizations: stringifyJsonField(vehicleAuthorizations),
+      maxPassengers: maxPassengers ? parseInt(maxPassengers, 10) : null,
+      driverNotes,
+      
+      notes
+    };
+    
+    const member = await prisma.member.create({
+      data: memberData
+    });
+    
+    console.log('✅ Membre créé avec succès:', member.id);
+    res.status(201).json({
+      member: transformMember(member),
+      message: 'Membre créé avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur création membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la création du membre',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/members/create-with-login - Créer un membre avec accès login
+app.post('/api/members/create-with-login', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('👤 Création membre avec login:', req.body);
+    
+    const memberData = { ...req.body };
+    
+    // Forcer l'activation du login et générer un mot de passe temporaire
+    memberData.loginEnabled = true;
+    
+    if (!memberData.temporaryPassword) {
+      // Générer un mot de passe temporaire
+      memberData.temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
+    }
+    
+    memberData.mustChangePassword = true;
+    
+    // Générer un matricule si pas fourni
+    if (!memberData.matricule) {
+      const year = new Date().getFullYear();
+      const count = await prisma.member.count() + 1;
+      memberData.matricule = `RBE${year}${count.toString().padStart(3, '0')}`;
+    }
+    
+    // Utiliser l'endpoint de création standard
+    req.body = memberData;
+    return app._router.handle({ ...req, method: 'POST', url: '/api/members' }, res);
+    
+  } catch (error) {
+    console.error('❌ Erreur création membre avec login:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la création du membre',
+      message: error.message 
+    });
+  }
+});
+
+// PATCH /api/members/:id - Mettre à jour un membre
+app.patch('/api/members/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body };
+    
+    // Convertir les dates
+    ['birthDate', 'joinDate', 'renewalDate', 'licenseExpiryDate', 'medicalCertificateDate'].forEach(field => {
+      if (updates[field]) {
+        updates[field] = new Date(updates[field]);
+      }
+    });
+    
+    // Convertir les nombres
+    ['paymentAmount', 'maxPassengers'].forEach(field => {
+      if (updates[field]) {
+        updates[field] = parseFloat(updates[field]);
+      }
+    });
+    
+    // Stringifier les objets JSON
+    ['driverCertifications', 'vehicleAuthorizations'].forEach(field => {
+      if (updates[field]) {
+        updates[field] = stringifyJsonField(updates[field]);
+      }
+    });
+    
+    const member = await prisma.member.update({
+      where: { id },
+      data: updates
+    });
+    
+    console.log('✅ Membre mis à jour:', id);
+    res.json({
+      member: transformMember(member),
+      message: 'Membre mis à jour avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur mise à jour membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la mise à jour du membre',
+      message: error.message 
+    });
+  }
+});
+
+// DELETE /api/members/:id - Supprimer un membre
+app.delete('/api/members/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    
+    await prisma.member.delete({
+      where: { id }
+    });
+    
+    console.log('✅ Membre supprimé:', id);
+    res.json({
+      message: 'Membre supprimé avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur suppression membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la suppression du membre',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/members/:id/reset-password - Réinitialiser le mot de passe
 app.post('/api/members/:id/reset-password', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
-  
   try {
     const { id } = req.params;
     
-    const member = await prisma.member.findUnique({ where: { id } });
-    if (!member) {
-      return res.status(404).json({ error: 'Membre non trouvé' });
-    }
-
-    if (!member.loginEnabled) {
-      return res.status(400).json({ error: 'Accès MyRBE non activé pour ce membre' });
-    }
-
-    // Générer nouveau mot de passe temporaire
-    const tempPassword = Math.random().toString(36).slice(-8).toUpperCase();
+    // Générer un nouveau mot de passe temporaire
+    const temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
     
-    const updatedMember = await prisma.member.update({
+    const member = await prisma.member.update({
       where: { id },
       data: {
-        temporaryPassword: tempPassword,
-        internalPassword: null, // Effacer l'ancien mot de passe
+        temporaryPassword,
         mustChangePassword: true,
         loginAttempts: 0,
         lockedUntil: null
       }
     });
-
-    // Log de l'action
-    await prisma.connectionLog.create({
-      data: {
-        memberId: id,
-        type: 'PASSWORD_RESET',
-        success: true,
-        ipAddress: req.ip || 'unknown',
-        userAgent: req.headers['user-agent'] || 'unknown',
-        details: `Mot de passe réinitialisé par ${req.user?.email || 'admin'}`
-      }
-    });
-
-    res.json({ 
-      success: true, 
-      temporaryPassword: tempPassword 
-    });
-
-  } catch (error) {
-    console.error('Erreur reset password:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// Récupérer les logs de connexion d'un membre
-app.get('/api/members/:id/connection-logs', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  
-  try {
-    const { id } = req.params;
-    const { limit = 50, offset = 0 } = req.query;
     
-    const logs = await prisma.connectionLog.findMany({
-      where: { memberId: id },
-      orderBy: { timestamp: 'desc' },
-      take: parseInt(limit),
-      skip: parseInt(offset)
-    });
-
-    res.json({ logs });
-
-  } catch (error) {
-    console.error('Erreur récupération logs:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// Endpoint pour rechercher des membres similaires (pour éviter doublons)
-app.get('/api/members/search-similar', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  
-  try {
-    const { firstName, lastName, email } = req.query;
-    
-    const members = await prisma.member.findMany({
-      where: {
-        OR: [
-          { email: { contains: email, mode: 'insensitive' } },
-          {
-            AND: [
-              { firstName: { contains: firstName, mode: 'insensitive' } },
-              { lastName: { contains: lastName, mode: 'insensitive' } }
-            ]
-          }
-        ]
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        matricule: true,
-        loginEnabled: true,
-        membershipStatus: true,
-        role: true
-      }
-    });
-
-    res.json({ members });
-
-  } catch (error) {
-    console.error('Erreur recherche membres:', error);
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-
-// Modifier la connexion membre pour enregistrer les logs
-app.post('/auth/member-login', async (req, res) => {
-  if (!ensureDB(res)) return;
-  
-  try {
-    const { identifier, matricule, password } = req.body;
-    const loginIdentifier = identifier || matricule;
-    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-
-    if (!loginIdentifier || !password) {
-      return res.status(400).json({ error: 'Identifiant et mot de passe requis' });
-    }
-
-    console.log('🔐 Tentative de connexion membre:', loginIdentifier);
-
-    // Trouver le membre par matricule ou email
-    const member = await prisma.member.findFirst({
-      where: {
-        OR: [
-          { matricule: loginIdentifier },
-          { email: loginIdentifier }
-        ]
-      }
-    });
-
-    // Log de tentative de connexion
-    const logData = {
-      type: 'LOGIN_ATTEMPT',
-      ipAddress: clientIP,
-      userAgent: userAgent,
-      details: `Tentative de connexion avec identifiant: ${loginIdentifier}`
-    };
-
-    if (member) {
-      logData.memberId = member.id;
-    }
-
-    if (!member) {
-      // Log échec - membre non trouvé
-      await prisma.connectionLog.create({
-        data: {
-          ...logData,
-          success: false,
-          details: `${logData.details} - Membre non trouvé`
-        }
-      });
-      
-      return res.status(401).json({ error: 'Identifiant invalide' });
-    }
-
-    if (!member.loginEnabled) {
-      // Log échec - accès désactivé
-      await prisma.connectionLog.create({
-        data: {
-          ...logData,
-          success: false,
-          details: `${logData.details} - Accès MyRBE non activé`
-        }
-      });
-      
-      return res.status(401).json({ 
-        error: 'Accès MyRBE non activé. Contactez un administrateur.' 
-      });
-    }
-
-    // Vérifier verrouillage
-    if (member.lockedUntil && member.lockedUntil > new Date()) {
-      await prisma.connectionLog.create({
-        data: {
-          ...logData,
-          success: false,
-          details: `${logData.details} - Compte verrouillé`
-        }
-      });
-      
-      return res.status(423).json({ 
-        error: 'Compte temporairement verrouillé. Réessayez plus tard.' 
-      });
-    }
-
-    // Vérifier mot de passe
-    const passwordToCheck = member.temporaryPassword || member.internalPassword;
-    
-    if (!passwordToCheck) {
-      await prisma.connectionLog.create({
-        data: {
-          ...logData,
-          success: false,
-          details: `${logData.details} - Mot de passe non configuré`
-        }
-      });
-      
-      return res.status(401).json({ 
-        error: 'Mot de passe non configuré. Contactez un administrateur.' 
-      });
-    }
-
-    let passwordValid = false;
-    
-    // Si c'est un mot de passe temporaire en clair, comparer directement
-    if (member.temporaryPassword && password === member.temporaryPassword) {
-      passwordValid = true;
-    } else if (member.internalPassword) {
-      // Sinon, vérifier le mot de passe hashé
-      passwordValid = await bcrypt.compare(password, member.internalPassword);
-    }
-
-    if (!passwordValid) {
-      // Incrémenter tentatives échouées
-      const attempts = member.loginAttempts + 1;
-      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null;
-
-      await prisma.member.update({
-        where: { id: member.id },
-        data: {
-          loginAttempts: attempts,
-          lockedUntil
-        }
-      });
-
-      // Log échec mot de passe
-      await prisma.connectionLog.create({
-        data: {
-          ...logData,
-          success: false,
-          details: `${logData.details} - Mot de passe incorrect (tentative ${attempts}/5)`
-        }
-      });
-
-      console.log('❌ Mot de passe incorrect pour:', loginIdentifier);
-      return res.status(401).json({ error: 'Mot de passe incorrect' });
-    }
-
-    // Connexion réussie - réinitialiser tentatives
-    await prisma.member.update({
-      where: { id: member.id },
-      data: {
-        loginAttempts: 0,
-        lockedUntil: null,
-        lastLoginAt: new Date(),
-        // Si c'était un mot de passe temporaire, forcer le changement
-        mustChangePassword: !!member.temporaryPassword
-      }
-    });
-
-    // Log connexion réussie
-    await prisma.connectionLog.create({
-      data: {
-        ...logData,
-        type: 'LOGIN_SUCCESS',
-        success: true,
-        details: `Connexion réussie pour ${member.firstName} ${member.lastName}`
-      }
-    });
-
-    console.log('✅ Connexion réussie pour:', member.matricule);
-
-    // Générer token JWT
-    const token = issueToken({
-      userId: member.id,
-      username: member.matricule,
-      role: member.role,
-      type: 'member'
-    });
-
+    console.log('✅ Mot de passe réinitialisé pour:', member.matricule);
     res.json({
-      token,
-      user: {
-        id: member.id,
-        username: member.matricule,
-        prenom: member.firstName,
-        nom: member.lastName,
-        email: member.email,
-        role: member.role,
-        matricule: member.matricule,
-        mustChangePassword: member.mustChangePassword || !!member.temporaryPassword,
-        roles: [member.role],
-        type: 'member'
-      }
+      temporaryPassword,
+      message: 'Mot de passe réinitialisé avec succès'
     });
-
+    
   } catch (error) {
-    console.error('❌ Erreur connexion membre:', error);
-    res.status(500).json({ error: 'Erreur de connexion' });
-  }
-});
-
-// === RétroMail: dossiers et utilitaires ===
-const RETROMAIL_DIR = path.join(process.cwd(), 'retromail');
-const RETROMAIL_UPLOADS_DIR = path.join(RETROMAIL_DIR, 'uploads');
-
-// S'assurer que les dossiers existent
-for (const p of [RETROMAIL_DIR, RETROMAIL_UPLOADS_DIR]) {
-  try { await fs.mkdir(p, { recursive: true }); } catch {}
-}
-
-// Servir statiques pour RétroMail
-app.use('/retromail/uploads', express.static(RETROMAIL_UPLOADS_DIR));
-
-// Liste des messages (.json) disponibles
-app.get('/retromail/list', async (_req, res) => {
-  try {
-    const files = await fs.readdir(RETROMAIL_DIR);
-    const jsons = files.filter(f => f.toLowerCase().endsWith('.json')).sort().reverse();
-    return res.json(jsons);
-  } catch (e) {
-    console.error('retromail list error:', e);
-    return res.status(500).json([]);
-  }
-});
-
-// Récupérer un message JSON (ou PDF si tu en génères plus tard)
-app.get('/retromail/:filename', async (req, res) => {
-  try {
-    const raw = req.params.filename || '';
-    const base = path.basename(raw); // éviter traversal
-    const isJson = base.toLowerCase().endsWith('.json');
-    const filePath = path.join(RETROMAIL_DIR, isJson ? base : `${base}.json`);
-    const exists = await fs.access(filePath).then(()=>true).catch(()=>false);
-    if (!exists) return res.status(404).json({ error: 'Not found' });
-    const content = await fs.readFile(filePath, 'utf-8');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    return res.send(content);
-  } catch (e) {
-    console.error('retromail get error:', e);
-    return res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Multer pour les captures RétroReports
-const retroUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, RETROMAIL_UPLOADS_DIR),
-    filename: (_req, file, cb) => {
-      const ts = Date.now();
-      const safe = (file.originalname || 'capture')
-        .replace(/[^a-zA-Z0-9._-]+/g, '_')
-        .slice(0, 120);
-      cb(null, `${ts}-${safe}`);
-    }
-  }),
-  fileFilter: (_req, file, cb) => {
-    if ((file.mimetype || '').startsWith('image/')) return cb(null, true);
-    return cb(new Error('Seules les images sont acceptées'));
-  },
-  limits: { fileSize: 10 * 1024 * 1024, files: 10 }
-});
-
-// Helper: adresse RétroMail pour un utilisateur
-async function computeRetroMailAddressByUserId(userId) {
-  try {
-    const su = await prisma.siteUser.findUnique({
-      where: { id: userId },
-      include: { linkedMember: true }
+    console.error('❌ Erreur réinitialisation mot de passe:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la réinitialisation',
+      message: error.message 
     });
-    if (!su) return null;
-    const matricule = su.linkedMember?.memberNumber || null;
-    if (matricule) return `${matricule}@retromail.fr`;
-    return `${su.username}@retromail.fr`;
-  } catch {
-    return null;
-  }
-}
-
-// Helper: écrire un message RétroMail
-async function writeRetroMail({ to, subject, message, filesMeta, kind = 'retroreport', refId }) {
-  const payload = {
-    to,
-    subject,
-    description: message,
-    id: refId,
-    kind,
-    files: filesMeta || [],
-    createdAt: new Date().toISOString()
-  };
-  const fname = `${kind}-${refId || 'msg'}-${Date.now()}.json`;
-  const fpath = path.join(RETROMAIL_DIR, fname);
-  await fs.writeFile(fpath, JSON.stringify(payload, null, 2), 'utf-8');
-  return fname;
-}
-
-// Helper: transformer RetroReport
-function transformRetroReport(r) {
-  return {
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    category: r.category,
-    type: r.type,
-    priority: r.priority,
-    status: r.status,
-    createdBy: r.createdBy,
-    assignedTo: r.assignedTo,
-    attachments: r.attachments ? JSON.parse(r.attachments) : [],
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-    comments: (r.comments || []).map(c => ({
-      id: c.id,
-      author: c.author,
-      message: c.message,
-      createdAt: c.createdAt
-    }))
-  };
-}
-
-// GET /api/retro-reports - Liste des RétroReports
-app.get('/api/retro-reports', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const where = {};
-    if (req.query.status) where.status = String(req.query.status);
-    if (req.query.priority) where.priority = String(req.query.priority);
-
-    const items = await prisma.retroReport.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: { comments: { orderBy: { createdAt: 'asc' } } }
-    });
-
-    res.json({ reports: items.map(transformRetroReport) });
-  } catch (e) {
-    console.error('GET /api/retro-reports error:', e);
-    res.status(500).json({ error: 'Impossible de charger les RétroReports' });
   }
 });
 
-// POST /api/retro-reports - Créer avec captures obligatoires
-app.post('/api/retro-reports', requireAuth, retroUpload.array('screenshots', 10), async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { title, description, category = '', priority = 'medium', type = 'bug' } = req.body || {};
-    if (!title || !description) {
-      return res.status(400).json({ error: 'Titre et description requis' });
-    }
-    const files = req.files || [];
-    if (!files.length) {
-      return res.status(400).json({ error: 'Au moins une capture d\'écran (image) est obligatoire' });
-    }
-    const creatorName = req.user?.prenom && req.user?.nom
-      ? `${req.user.prenom} ${req.user.nom}`
-      : (req.user?.username || req.user?.sub || 'Système');
-    const creatorId = req.user?.sub || null;
-
-    const filesMeta = files.map(f => ({
-      filename: path.basename(f.filename),
-      originalname: f.originalname,
-      mime: f.mimetype,
-      size: f.size
-    }));
-
-    const created = await prisma.retroReport.create({
-      data: { 
-        title, description, category, priority, type, status: 'open',
-        createdBy: creatorName,
-        createdByUserId: creatorId,
-        attachments: JSON.stringify(filesMeta)
-      },
-      include: { comments: true }
-    });
-
-    // RétroMail: notifier l'initiateur
-    const to = creatorId ? await computeRetroMailAddressByUserId(creatorId) : null;
-    if (to) {
-      await writeRetroMail({
-        to,
-        subject: `RétroReport créé`,
-        message: `Votre ticket "${title}" a été créé et pris en compte.`,
-        filesMeta,
-        kind: 'retroreport',
-        refId: created.id
-      });
-    }
-
-    res.status(201).json({ report: transformRetroReport(created) });
-  } catch (e) {
-    console.error('POST /api/retro-reports error:', e);
-    res.status(500).json({ error: 'Impossible de créer le RétroReport' });
-  }
-});
-
-// PATCH /api/retro-reports/:id - Modifier
-app.patch('/api/retro-reports/:id', requireAuth, async (req, res) => {
+// POST /api/members/:id/toggle-login - Activer/désactiver l'accès login
+app.post('/api/members/:id/toggle-login', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { id } = req.params;
-    const { title, description, category, priority, type } = req.body || {};
-
-    const updated = await prisma.retroReport.update({
+    const { action } = req.body;
+    
+    const updateData = {
+      loginEnabled: action === 'enable'
+    };
+    
+    // Si on active l'accès et qu'il n'y a pas de mot de passe temporaire, en générer un
+    if (action === 'enable') {
+      const existing = await prisma.member.findUnique({ where: { id } });
+      if (!existing?.temporaryPassword) {
+        updateData.temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
+        updateData.mustChangePassword = true;
+      }
+    }
+    
+    const member = await prisma.member.update({
       where: { id },
-      data: { 
-        ...(title != null ? { title } : {}),
-        ...(description != null ? { description } : {}),
-        ...(category != null ? { category } : {}),
-        ...(priority != null ? { priority } : {}),
-        ...(type != null ? { type } : {})
-      },
-      include: { comments: true }
+      data: updateData
     });
-
-    // Notifier l'initiateur
-    const to = updated.createdByUserId ? await computeRetroMailAddressByUserId(updated.createdByUserId) : null;
-    if (to) {
-      await writeRetroMail({
-        to,
-        subject: `RétroReport mis à jour`,
-        message: `Votre ticket "${updated.title}" a été mis à jour.`,
-        filesMeta: JSON.parse(updated.attachments || '[]'),
-        kind: 'retroreport',
-        refId: updated.id
-      });
-    }
-
-    res.json({ report: transformRetroReport(updated) });
-  } catch (e) {
-    console.error('PATCH /api/retro-reports/:id error:', e);
-    res.status(500).json({ error: 'Impossible de modifier le RétroReport' });
+    
+    console.log('✅ Accès login modifié pour:', member.matricule);
+    res.json({
+      loginEnabled: member.loginEnabled,
+      temporaryPassword: member.temporaryPassword,
+      message: `Accès ${action === 'enable' ? 'activé' : 'désactivé'} avec succès`
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur modification accès login:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur lors de la modification',
+      message: error.message 
+    });
   }
 });
 
-app.delete('/api/retro-reports/:id', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    await prisma.retroReport.delete({ where: { id } });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('DELETE /api/retro-reports/:id error:', e);
-    res.status(500).json({ error: 'Impossible de supprimer le RétroReport' });
-  }
-});
+// ========== FIN ENDPOINTS MEMBRES ==========
 
-// POST /api/retro-reports/:id/status - Changer statut
-app.post('/api/retro-reports/:id/status', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    const { status } = req.body || {};
-    const allowed = ['open', 'in_progress', 'resolved', 'closed'];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ error: 'Statut invalide' });
-    }
-
-    const updated = await prisma.retroReport.update({
-      where: { id },
-      data: { status },
-      include: { comments: true }
-    });
-
-    // Notifier l'initiateur
-    const to = updated.createdByUserId ? await computeRetroMailAddressByUserId(updated.createdByUserId) : null;
-    if (to) {
-      await writeRetroMail({
-        to,
-        subject: `Statut mis à jour`,
-        message: `Le statut de votre ticket "${updated.title}" est maintenant: ${status}.`,
-        filesMeta: JSON.parse(updated.attachments || '[]'),
-        kind: 'retroreport',
-        refId: updated.id
-      });
-    }
-
-    res.json({ report: transformRetroReport(updated) });
-  } catch (e) {
-    console.error('POST /api/retro-reports/:id/status error:', e);
-    res.status(500).json({ error: 'Impossible de changer le statut' });
-  }
-});
-
-// POST /api/retro-reports/:id/comments - Ajouter commentaire
-app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    const { message } = req.body || {};
-    if (!message) return res.status(400).json({ error: 'Message requis' });
-
-    const author = req.user?.prenom && req.user?.nom
-      ? `${req.user.prenom} ${req.user.nom}`
-      : (req.user?.username || req.user?.sub || 'Système');
-
-    await prisma.retroReportComment.create({
-      data: { reportId: id, author, message }
-    });
-
-    const refreshed = await prisma.retroReport.findUnique({
-      where: { id },
-      include: { comments: { orderBy: { createdAt: 'asc' } } }
-    });
-    if (!refreshed) return res.status(404).json({ error: 'RétroReport introuvable' });
-
-    // Notifier l'initiateur
-    const to = refreshed.createdByUserId ? await computeRetroMailAddressByUserId(refreshed.createdByUserId) : null;
-    if (to) {
-      await writeRetroMail({
-        to,
-        subject: `Nouveau commentaire`,
-        message: `Un nouveau commentaire a été ajouté à votre ticket "${refreshed.title}".`,
-        filesMeta: JSON.parse(refreshed.attachments || '[]'),
-        kind: 'retroreport',
-        refId: refreshed.id
-      });
-    }
-
-    res.json({ report: transformRetroReport(refreshed) });
-  } catch (e) {
-    console.error('POST /api/retro-reports/:id/comments error:', e);
-    res.status(500).json({ error: 'Impossible d ajouter le commentaire' });
-  }
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
 });
