@@ -1,19 +1,15 @@
 // Load env early
 import 'dotenv/config';
-
 import express from 'express';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
-import multer from 'multer';
-import QRCode from 'qrcode';
-import { PrismaClient } from '@prisma/client';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-import nodemailer from 'nodemailer';
-import PDFDocument from 'pdfkit';
-import crypto from 'crypto';
-import url from 'url';
+// si tu utilises __dirname quelque part:
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Remplace les require locaux par des import avec .js
+import finance from './finance.js';
+// import autreRouter from './autre-router.js'
 
 // Local modules
 import { documentsAPI as docsAPI, upload as documentsUpload } from './documents.js';
@@ -2865,6 +2861,3 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
     });
   }
 });
-
-const finance = require('./finance');
-app.use('/api/finance', finance);
