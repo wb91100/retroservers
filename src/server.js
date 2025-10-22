@@ -2865,3 +2865,6 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
     });
   }
 });
+
+const finance = require('./finance');
+app.use('/api/finance', finance);
