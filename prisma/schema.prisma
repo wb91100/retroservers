@@ -464,3 +464,52 @@ model RetroReportComment {
   @@index([reportId])
   @@index([createdAt])
 }
+
+// Ajouter ces nouveaux modèles
+
+model FinanceSimulationScenario {
+  id               String   @id @default(cuid())
+  name             String
+  description      String
+  projectionMonths Int      @default(12)
+  status           String   @default("DRAFT") // DRAFT, ACTIVE, ARCHIVED
+  createdBy        String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  // Relations
+  incomeItems      FinanceSimulationIncomeItem[]
+  expenseItems     FinanceSimulationExpenseItem[]
+  
+  @@map("finance_simulation_scenarios")
+}
+
+model FinanceSimulationIncomeItem {
+  id          String   @id @default(cuid())
+  scenarioId  String
+  description String
+  amount      Float
+  category    String   @default("AUTRE")
+  frequency   String   @default("MONTHLY") // DAILY, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  scenario    FinanceSimulationScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  
+  @@map("finance_simulation_income_items")
+}
+
+model FinanceSimulationExpenseItem {
+  id          String   @id @default(cuid())
+  scenarioId  String
+  description String
+  amount      Float
+  category    String   @default("AUTRE")
+  frequency   String   @default("MONTHLY") // DAILY, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  scenario    FinanceSimulationScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  
+  @@map("finance_simulation_expense_items")
+}

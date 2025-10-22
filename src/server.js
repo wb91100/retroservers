@@ -2234,3 +2234,399 @@ app.get('/admin/dashboard', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Serveur prêt sur http://localhost:${PORT}`);
 });
+
+// Ajouter ces nouveaux endpoints pour les simulations améliorées
+
+// GET /api/finance/simulations - Récupérer tous les scénarios
+app.get('/api/finance/simulations', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('🧮 Récupération des scénarios de simulation');
+    
+    const scenarios = await prisma.financeSimulationScenario.findMany({
+      include: {
+        incomeItems: true,
+        expenseItems: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    res.json({
+      scenarios: scenarios.map(scenario => ({
+        ...scenario,
+        totalMonthlyIncome: scenario.incomeItems.reduce((sum, item) => sum + item.amount, 0),
+        totalMonthlyExpenses: scenario.expenseItems.reduce((sum, item) => sum + item.amount, 0),
+        itemsCount: scenario.incomeItems.length + scenario.expenseItems.length
+      }))
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur récupération scénarios:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/finance/simulations - Créer un nouveau scénario (contexte seulement)
+app.post('/api/finance/simulations', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { name, description, projectionMonths } = req.body;
+    
+    console.log('🧮 Création scénario de simulation:', name);
+    
+    // Validation
+    if (!name || !description) {
+      return res.status(400).json({ 
+        error: 'Champs requis manquants',
+        message: 'Nom et description sont obligatoires' 
+      });
+    }
+    
+    const scenario = await prisma.financeSimulationScenario.create({
+      data: {
+        name: name.trim(),
+        description: description.trim(),
+        projectionMonths: projectionMonths || 12,
+        createdBy: req.user.matricule || req.user.email,
+        status: 'DRAFT' // DRAFT, ACTIVE, ARCHIVED
+      }
+    });
+    
+    console.log('✅ Scénario créé:', scenario.id);
+    
+    res.status(201).json({
+      scenario: {
+        ...scenario,
+        totalMonthlyIncome: 0,
+        totalMonthlyExpenses: 0,
+        itemsCount: 0
+      },
+      message: 'Scénario créé avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur création scénario:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/finance/simulations/:id - Récupérer un scénario détaillé
+app.get('/api/finance/simulations/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    
+    const scenario = await prisma.financeSimulationScenario.findUnique({
+      where: { id },
+      include: {
+        incomeItems: {
+          orderBy: { createdAt: 'asc' }
+        },
+        expenseItems: {
+          orderBy: { createdAt: 'asc' }
+        }
+      }
+    });
+    
+    if (!scenario) {
+      return res.status(404).json({ 
+        error: 'Scénario non trouvé' 
+      });
+    }
+    
+    const totalMonthlyIncome = scenario.incomeItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalMonthlyExpenses = scenario.expenseItems.reduce((sum, item) => sum + item.amount, 0);
+    
+    res.json({
+      scenario: {
+        ...scenario,
+        totalMonthlyIncome,
+        totalMonthlyExpenses,
+        monthlyNet: totalMonthlyIncome - totalMonthlyExpenses,
+        itemsCount: scenario.incomeItems.length + scenario.expenseItems.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur récupération scénario:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// PUT /api/finance/simulations/:id - Mettre à jour le contexte d'un scénario
+app.put('/api/finance/simulations/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { name, description, projectionMonths, status } = req.body;
+    
+    const scenario = await prisma.financeSimulationScenario.update({
+      where: { id },
+      data: {
+        name: name?.trim(),
+        description: description?.trim(),
+        projectionMonths,
+        status,
+        updatedAt: new Date()
+      }
+    });
+    
+    console.log('✅ Scénario mis à jour:', id);
+    
+    res.json({
+      scenario,
+      message: 'Scénario mis à jour avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur mise à jour scénario:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/finance/simulations/:id/income - Ajouter une recette
+app.post('/api/finance/simulations/:id/income', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { description, amount, category, frequency } = req.body;
+    
+    console.log('💰 Ajout recette au scénario:', id);
+    
+    // Validation
+    if (!description || !amount || amount <= 0) {
+      return res.status(400).json({ 
+        error: 'Données invalides',
+        message: 'Description et montant positif requis' 
+      });
+    }
+    
+    const incomeItem = await prisma.financeSimulationIncomeItem.create({
+      data: {
+        scenarioId: id,
+        description: description.trim(),
+        amount: parseFloat(amount),
+        category: category || 'AUTRE',
+        frequency: frequency || 'MONTHLY'
+      }
+    });
+    
+    console.log('✅ Recette ajoutée:', incomeItem.id);
+    
+    res.status(201).json({
+      incomeItem,
+      message: 'Recette ajoutée avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur ajout recette:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/finance/simulations/:id/expense - Ajouter une dépense
+app.post('/api/finance/simulations/:id/expense', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { description, amount, category, frequency } = req.body;
+    
+    console.log('💸 Ajout dépense au scénario:', id);
+    
+    // Validation
+    if (!description || !amount || amount <= 0) {
+      return res.status(400).json({ 
+        error: 'Données invalides',
+        message: 'Description et montant positif requis' 
+      });
+    }
+    
+    const expenseItem = await prisma.financeSimulationExpenseItem.create({
+      data: {
+        scenarioId: id,
+        description: description.trim(),
+        amount: parseFloat(amount),
+        category: category || 'AUTRE',
+        frequency: frequency || 'MONTHLY'
+      }
+    });
+    
+    console.log('✅ Dépense ajoutée:', expenseItem.id);
+    
+    res.status(201).json({
+      expenseItem,
+      message: 'Dépense ajoutée avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur ajout dépense:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// DELETE /api/finance/simulations/income/:itemId - Supprimer une recette
+app.delete('/api/finance/simulations/income/:itemId', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { itemId } = req.params;
+    
+    await prisma.financeSimulationIncomeItem.delete({
+      where: { id: itemId }
+    });
+    
+    console.log('✅ Recette supprimée:', itemId);
+    
+    res.json({
+      message: 'Recette supprimée avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur suppression recette:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// DELETE /api/finance/simulations/expense/:itemId - Supprimer une dépense
+app.delete('/api/finance/simulations/expense/:itemId', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { itemId } = req.params;
+    
+    await prisma.financeSimulationExpenseItem.delete({
+      where: { id: itemId }
+    });
+    
+    console.log('✅ Dépense supprimée:', itemId);
+    
+    res.json({
+      message: 'Dépense supprimée avec succès'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur suppression dépense:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// POST /api/finance/simulations/:id/run - Exécuter la simulation
+app.post('/api/finance/simulations/:id/run', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    
+    // Récupérer le scénario avec ses items
+    const scenario = await prisma.financeSimulationScenario.findUnique({
+      where: { id },
+      include: {
+        incomeItems: true,
+        expenseItems: true
+      }
+    });
+    
+    if (!scenario) {
+      return res.status(404).json({ error: 'Scénario non trouvé' });
+    }
+    
+    // Calculer les totaux mensuels
+    const monthlyIncome = scenario.incomeItems.reduce((sum, item) => {
+      const multiplier = getFrequencyMultiplier(item.frequency);
+      return sum + (item.amount * multiplier);
+    }, 0);
+    
+    const monthlyExpenses = scenario.expenseItems.reduce((sum, item) => {
+      const multiplier = getFrequencyMultiplier(item.frequency);
+      return sum + (item.amount * multiplier);
+    }, 0);
+    
+    // Récupérer le solde actuel
+    const latestBalance = await prisma.financeBalance.findFirst({
+      orderBy: { createdAt: 'desc' }
+    });
+    const currentBalance = latestBalance?.balance || 0;
+    
+    // Générer la projection
+    const projection = [];
+    let runningBalance = currentBalance;
+    
+    for (let month = 1; month <= scenario.projectionMonths; month++) {
+      const monthlyNet = monthlyIncome - monthlyExpenses;
+      runningBalance += monthlyNet;
+      
+      projection.push({
+        month,
+        startBalance: month === 1 ? currentBalance : projection[month - 2].endBalance,
+        income: monthlyIncome,
+        expenses: monthlyExpenses,
+        net: monthlyNet,
+        endBalance: runningBalance
+      });
+    }
+    
+    const finalBalance = projection[projection.length - 1].endBalance;
+    const totalChange = finalBalance - currentBalance;
+    
+    res.json({
+      simulation: {
+        scenarioId: id,
+        scenarioName: scenario.name,
+        startingBalance: currentBalance,
+        finalBalance,
+        totalChange,
+        monthlyIncome,
+        monthlyExpenses,
+        monthlyNet: monthlyIncome - monthlyExpenses,
+        projectionMonths: scenario.projectionMonths,
+        projection,
+        runDate: new Date(),
+        summary: {
+          isPositive: totalChange >= 0,
+          breakEvenMonth: projection.findIndex(p => p.endBalance < 0) + 1 || null,
+          averageBalance: projection.reduce((sum, p) => sum + p.endBalance, 0) / projection.length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur exécution simulation:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// Fonction helper pour convertir la fréquence en multiplicateur mensuel
+function getFrequencyMultiplier(frequency) {
+  const multipliers = {
+    'DAILY': 30,
+    'WEEKLY': 4.33,
+    'MONTHLY': 1,
+    'QUARTERLY': 0.33,
+    'YEARLY': 0.083
+  };
+  return multipliers[frequency] || 1;
+}
