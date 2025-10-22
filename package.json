@@ -1,7 +1,7 @@
 {
   "name": "rbe-intranet-api",
   "version": "1.0.0",
-  "type": "module",
+  "type": "commonjs",
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch ./src/server.js",
