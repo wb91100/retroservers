@@ -1,11 +1,30 @@
 // Load env early
 import 'dotenv/config';
 import express from 'express';
-// si tu utilises __dirname quelque part:
-import { fileURLToPath } from 'node:url';
+import multer from 'multer';
+import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Dossier d’upload (adapte au tien si nécessaire)
+const galleryUploadDir = path.join(__dirname, '../uploads/vehicles');
+fs.mkdirSync(galleryUploadDir, { recursive: true });
+
+// Stockage Multer
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, galleryUploadDir),
+  filename: (req, file, cb) => {
+    const ts = Date.now();
+    const safe = file.originalname.replace(/[^a-z0-9.\-_]/gi, '_');
+    cb(null, `${ts}-${safe}`);
+  },
+});
+
+// Utilisation de Multer (corrige la variable qui plantait à la ligne 19)
+const uploadGallery = multer({ storage });
 
 // Remplace les require locaux par des import avec .js
 import finance from './finance.js';
@@ -16,15 +35,6 @@ import { documentsAPI as docsAPI, upload as documentsUpload } from './documents.
 import * as newsletterService from './newsletter-service.js';
 
 // Déclaration du middleware d'upload (multer)
-const uploadGallery = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter: (req, file, cb) => {
-    if ((file.mimetype || '').startsWith('image/')) return cb(null, true);
-    return cb(new Error('Seules les images sont acceptées pour la galerie'), false);
-  }
-});
-
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 app.set('trust proxy', 1);
