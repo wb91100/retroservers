@@ -40,9 +40,6 @@ import { documentsAPI as docsAPI, upload as documentsUpload } from './documents.
 import * as newsletterService from './newsletter-service.js';
 
 // Déclaration du middleware d'upload (multer)
-const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
-app.set('trust proxy', 1);
 
 // SMTP (optionnel: ne bloque pas si non configuré)
 const mailer = (process.env.SMTP_HOST && process.env.SMTP_USER)
@@ -182,6 +179,9 @@ function requireAuth(req, res, next) {
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
+    // Normalise des infos pratiques
+    req.userId = decoded.userId || decoded.sub || decoded.id || null;
+    req.userEmail = decoded.email || decoded.username || null;
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Invalid or expired token' });
@@ -671,7 +671,7 @@ app.post('/auth/member-login', async (req, res) => {
 });
 
 // POST /auth/change-password - Changer le mot de passe membre
-app.post('/auth/change-password', requireAuth, async (req, res) => {
+app.post(['/auth/change-password', '/api/auth/change-password'], requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   
   try {
@@ -724,7 +724,7 @@ app.post('/auth/change-password', requireAuth, async (req, res) => {
 });
 
 // Profil membre courant
-app.get('/api/me', requireAuth, async (req, res) => {
+app.get(['/api/me', '/api/auth/me'], requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     if (req.user.type === 'member') {
@@ -1497,7 +1497,7 @@ app.get('/api/stocks/stats', requireAuth, async (_req, res) => {
 });
 
 // ========== ENDPOINTS OPÉRATIONS PROGRAMMÉES ==========
-app.get('/finance/scheduled-operations', requireAuth, async (req, res) => {
+app.get(['/finance/scheduled-operations', '/api/finance/scheduled-operations'], requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const operations = await prisma.scheduledOperation.findMany({
@@ -1510,7 +1510,7 @@ app.get('/finance/scheduled-operations', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/finance/scheduled-operations', requireAuth, async (req, res) => {
+app.post(['/finance/scheduled-operations', '/api/finance/scheduled-operations'], requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { type, description, amount, dueDate, category, recurring, notes } = req.body;
@@ -1658,9 +1658,9 @@ app.post('/admin/retro-reports/:id/comments', requireAuth, async (req, res) => {
     // Créer le commentaire
     const comment = await prisma.retroReportComment.create({
       data: {
-        reportId: id,
+        retroReportId: id,           // ← au lieu de reportId: id
         message,
-        author: req.user?.email || 'system'
+        author: req.user?.email || req.user?.matricule || 'system@railway'
       }
     });
     
@@ -1918,7 +1918,7 @@ app.post('/admin/retro-reports/:id/comments', requireAuth, async (req, res) => {
     
     const comment = await prisma.retroReportComment.create({
       data: {
-        reportId: id,
+        retroReportId: id,           // ← au lieu de reportId: id
         message,
         author: req.user?.email || req.user?.matricule || 'system@railway'
       }
@@ -2029,7 +2029,6 @@ app.post('/api/retro-reports', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { title, description, priority, category, impact, steps } = req.body;
-    
     if (!title || !description) {
       return res.status(400).json({ error: 'Titre et description requis' });
     }
@@ -2043,20 +2042,14 @@ app.post('/api/retro-reports', requireAuth, async (req, res) => {
         impact: impact || 'MINOR',
         steps: steps || '',
         status: 'OPEN',
-        reporterId: req.user.id,
+        reporterId: req.userId || null, // ← au lieu de req.user.id
         createdAt: new Date(),
         updatedAt: new Date()
       },
       include: {
-        reporter: {
-          select: { nom: true, prenom: true, email: true }
-        },
+        reporter: { select: { nom: true, prenom: true, email: true } },
         comments: {
-          include: {
-            author: {
-              select: { nom: true, prenom: true, email: true }
-            }
-          }
+          include: { author: { select: { nom: true, prenom: true, email: true } } }
         }
       }
     });
@@ -2168,6 +2161,8 @@ app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
     const { id } = req.params;
     const { content } = req.body;
 
+   
+
     if (!content) {
       return res.status(400).json({ error: 'Contenu du commentaire requis' });
     }
@@ -2175,15 +2170,11 @@ app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
     const comment = await prisma.retroReportComment.create({
       data: {
         content,
-        authorId: req.user.id,
+        authorId: req.userId,
         retroReportId: parseInt(id),
         createdAt: new Date()
       },
-      include: {
-        author: {
-          select: { nom: true, prenom: true, email: true }
-        }
-      }
+      include: { author: { select: { nom: true, prenom: true, email: true } } }
     });
 
     // Mettre à jour la date de modification du rapport
@@ -2241,7 +2232,7 @@ app.put('/api/retro-reports/:id/status', requireAuth, async (req, res) => {
 // ---------- ENDPOINTS ADMINISTRATIFS (PROTECTION PAR ROLE) ----------
 // Exemple de protection par rôle: admin uniquement
 app.use('/admin', requireAuth, (req, res, next) => {
-  if (req.user.type !== 'admin') {
+  if (req.user?.type !== 'admin') {
     return res.status(403).json({ error: 'Accès interdit' });
   }
   next();
@@ -2796,88 +2787,63 @@ app.put('/api/members/:id', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    const updateData = req.body;  where: { id: req.userId } 
     
     console.log('📝 Mise à jour membre:', id, updateData);
-    
-    // Vérifier les droits (seuls les admins peuvent modifier)
-    const currentUser = await prisma.user.findUnique({ 
-      where: { id: req.userId } 
+    MIN' && currentUser.id !== id) {
+    // Vérifier les droits (seuls les admins peuvent modifier)return res.status(403).json({ 
+    const currentUser = await prisma.user.findUnique({     error: 'Accès refusé',re: { id: req.userId } });
+      where: { id: req.userId }  membres' tus(401).json({ error: 'Utilisateur courant introuvable' });
     });
     
     if (currentUser.role !== 'ADMIN' && currentUser.id !== id) {
-      return res.status(403).json({ 
-        error: 'Accès refusé',
-        message: 'Seuls les administrateurs peuvent modifier les membres' 
+      return res.status(403).json({  updatedMember = await prisma.user.update({ error: 'Accès refusé',
+        error: 'Accès refusé', where: { id },    message: 'Seuls les administrateurs peuvent modifier les membres' 
+        message: 'Seuls les administrateurs peuvent modifier les membres'   data: {
       });
-    }
-    
-    const updatedMember = await prisma.user.update({
-      where: { id },
-      data: {
-        ...updateData,
-        updatedAt: new Date()
-      },
-      select: {
-        id: true,
-        matricule: true,
-        nom: true,
-        prenom: true,
+        message: 'Seuls les administrateurs peuvent modifier les membres'   data: {
+      });
+    }ew Date()tedMember = await prisma.user.update({re: { id },
+      where: { id },ata: {
+    const updatedMember = await prisma.user.update({..updateData,  });
+      where: { id },a,ue,
+      data: {matricule: true,rue,
+        ...updateData,ue,
+        updatedAt: new Date()rue,
+      },id: true,cule: true,rue,
+      select: { true,ue,,
+        id: true,,w Date()rue,
+        matricule: true,,e,ue,
+        nom: true,e,ue,,
+        prenom: true, true,e,
         email: true,
-        telephone: true,
-        ville: true,
-        statut: true,
-        isActive: true,
-        isValidated: true,
-        role: true,
+        telephone: true,,ue,
+        ville: true,ue,,
+        statut: true,true,sole.log('✅ Membre mis à jour:', updatedMember.matricule);
+        isActive: true,n({ member: updatedMember }); true,,
+        isValidated: true,sole.log('✅ Membre mis à jour:', updatedMember.matricule);,
+        role: true,.json({ member: updatedMember });
         updatedAt: true,
-      }
-    });
-    
-    console.log('✅ Membre mis à jour:', updatedMember.matricule);
-    res.json({ member: updatedMember });
-    
-  } catch (error) {
+      }.status(500).json({ 
+    });membre:', error);e mis à jour:', updatedMember.matricule);r serveur',r.matricule);member: updatedMember });
+    res.status(500).json({ tedMember });pdatedMember });rue,
+    console.log('✅ Membre mis à jour:', updatedMember.matricule);rreur serveur',
+    res.json({ member: updatedMember });datedMember.matricule);r serveur',
     console.error('❌ Erreur mise à jour membre:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur',
-      message: error.message 
-    });
-  }
-});
-
-// DELETE /api/members/:id - Supprimer un membre (soft delete)
-app.delete('/api/members/:id', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    console.log('🗑️ Suppression membre:', id);
-
-    // Vérifier les droits (seuls les admins peuvent supprimer)
-    const currentUser = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!currentUser || currentUser.role !== 'ADMIN') {
-      return res.status(403).json({
-        error: 'Accès refusé',
-        message: 'Seuls les administrateurs peuvent supprimer les membres',
-      });
-    }
-
-    // Soft delete : désactiver au lieu de supprimer
-    const deletedMember = await prisma.user.update({
-      where: { id },
-      data: { isActive: false, updatedAt: new Date() },
+  } catch (error) {.json({ 
+    console.error('❌ Erreur mise à jour membre:', error);upprimer un membre (soft delete)
+    res.status(500).json({ e });
+      error: 'Erreur serveur',DELETE /api/members/:id - Supprimer un membre (soft delete)
+      message: error.message });reur suppression membre:', error);
+    const { id } = req.params;(500).json({ error: 'Erreur serveur', message: error.message });
+    // ... logique ...    res.json({ ok: true });  } catch (error) {    console.error('❌ Erreur suppression membre:', error);n membre (soft delete)
+    res.status(500).json({ error: 'Erreur serveur', message: error.message });  }});    await prisma.retroReport.delete({
+      where: { id: parseInt(id) }
     });
 
-    console.log('✅ Membre désactivé:', deletedMember.matricule);
-    res.json({
-      message: 'Membre désactivé avec succès',
-      member: deletedMember,
-    });
+    res.json({ message: 'Rapport supprimé avec succès' });
   } catch (error) {
-    console.error('❌ Erreur suppression membre:', error);
-    res.status(500).json({
-      error: 'Erreur serveur',
-      message: error.message,
-    });
+    console.error('Erreur suppression retro report:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
