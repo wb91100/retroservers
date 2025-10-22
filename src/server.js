@@ -2335,9 +2335,7 @@ app.get('/api/finance/simulations/:id', requireAuth, async (req, res) => {
     });
     
     if (!scenario) {
-      return res.status(404).json({ 
-        error: 'Scénario non trouvé' 
-      });
+      return res.status(404).json({ error: 'Scénario non trouvé' });
     }
     
     const totalMonthlyIncome = scenario.incomeItems.reduce((sum, item) => sum + item.amount, 0);
@@ -2630,3 +2628,240 @@ function getFrequencyMultiplier(frequency) {
   };
   return multipliers[frequency] || 1;
 }
+
+// Ajouter ces endpoints dans le serveur (server.js ou app.js)
+
+// GET /api/members - Récupérer tous les membres
+app.get('/api/members', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('👥 Récupération de tous les membres');
+    
+    const members = await prisma.user.findMany({
+      select: {
+        id: true,
+        matricule: true,
+        nom: true,
+        prenom: true,
+        email: true,
+        telephone: true,
+        ville: true,
+        statut: true,
+        isActive: true,
+        isValidated: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        // Exclure le mot de passe et les infos sensibles
+      },
+      orderBy: [
+        { nom: 'asc' },
+        { prenom: 'asc' }
+      ]
+    });
+    
+    console.log(`✅ ${members.length} membres récupérés`);
+    
+    res.json({
+      members,
+      total: members.length,
+      active: members.filter(m => m.isActive).length,
+      validated: members.filter(m => m.isValidated).length,
+      pending: members.filter(m => !m.isValidated).length
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur récupération membres:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/members/stats - Statistiques des membres
+app.get('/api/members/stats', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    console.log('📊 Calcul des statistiques membres');
+    
+    const stats = await prisma.user.groupBy({
+      by: ['statut', 'isActive', 'isValidated'],
+      _count: true
+    });
+    
+    const totalMembers = await prisma.user.count();
+    const activeMembers = await prisma.user.count({ where: { isActive: true } });
+    const validatedMembers = await prisma.user.count({ where: { isValidated: true } });
+    const pendingMembers = await prisma.user.count({ where: { isValidated: false } });
+    
+    // Nouveaux membres ce mois
+    const thisMonth = new Date();
+    const monthStart = new Date(thisMonth.getFullYear(), thisMonth.getMonth(), 1);
+    const newThisMonth = await prisma.user.count({
+      where: {
+        createdAt: {
+          gte: monthStart
+        }
+      }
+    });
+    
+    res.json({
+      total: totalMembers,
+      active: activeMembers,
+      validated: validatedMembers,
+      pending: pendingMembers,
+      newThisMonth,
+      breakdown: stats
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur stats membres:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/members/:id - Récupérer un membre spécifique
+app.get('/api/members/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    console.log('👤 Récupération membre:', id);
+    
+    const member = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        matricule: true,
+        nom: true,
+        prenom: true,
+        email: true,
+        telephone: true,
+        ville: true,
+        statut: true,
+        isActive: true,
+        isValidated: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      }
+    });
+    
+    if (!member) {
+      return res.status(404).json({ 
+        error: 'Membre non trouvé' 
+      });
+    }
+    
+    res.json({ member });
+    
+  } catch (error) {
+    console.error('❌ Erreur récupération membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// PUT /api/members/:id - Mettre à jour un membre
+app.put('/api/members/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    console.log('📝 Mise à jour membre:', id, updateData);
+    
+    // Vérifier les droits (seuls les admins peuvent modifier)
+    const currentUser = await prisma.user.findUnique({ 
+      where: { id: req.userId } 
+    });
+    
+    if (currentUser.role !== 'ADMIN' && currentUser.id !== id) {
+      return res.status(403).json({ 
+        error: 'Accès refusé',
+        message: 'Seuls les administrateurs peuvent modifier les membres' 
+      });
+    }
+    
+    const updatedMember = await prisma.user.update({
+      where: { id },
+      data: {
+        ...updateData,
+        updatedAt: new Date()
+      },
+      select: {
+        id: true,
+        matricule: true,
+        nom: true,
+        prenom: true,
+        email: true,
+        telephone: true,
+        ville: true,
+        statut: true,
+        isActive: true,
+        isValidated: true,
+        role: true,
+        updatedAt: true,
+      }
+    });
+    
+    console.log('✅ Membre mis à jour:', updatedMember.matricule);
+    res.json({ member: updatedMember });
+    
+  } catch (error) {
+    console.error('❌ Erreur mise à jour membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
+
+// DELETE /api/members/:id - Supprimer un membre (soft delete)
+app.delete('/api/members/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    
+    console.log('🗑️ Suppression membre:', id);
+    
+    // Vérifier les droits (seuls les admins peuvent supprimer)
+    const currentUser = await prisma.user.findUnique({ 
+      where: { id: req.userId } 
+    });
+    
+    if (currentUser.role !== 'ADMIN') {
+      return res.status(403).json({ 
+        error: 'Accès refusé',
+        message: 'Seuls les administrateurs peuvent supprimer les membres' 
+      });
+    }
+    
+    // Soft delete : désactiver au lieu de supprimer
+    const deletedMember = await prisma.user.update({
+      where: { id },
+      data: {
+        isActive: false,
+        updatedAt: new Date()
+      }
+    });
+    
+    console.log('✅ Membre désactivé:', deletedMember.matricule);
+    res.json({ 
+      message: 'Membre désactivé avec succès',
+      member: deletedMember 
+    });
+    
+  } catch (error) {
+    console.error('❌ Erreur suppression membre:', error);
+    res.status(500).json({ 
+      error: 'Erreur serveur',
+      message: error.message 
+    });
+  }
+});
