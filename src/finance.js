@@ -1,8 +1,6 @@
 import { Router } from 'express';
-
 const router = Router();
 
-// TODO: branche sur ta vraie logique
 router.get('/balance', (req, res) => {
   res.json({ amount: 0, currency: 'EUR', updatedAt: new Date().toISOString() });
 });

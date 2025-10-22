@@ -10,7 +10,7 @@ COPY package*.json ./
 COPY prisma ./prisma
 
 # Installer les dépendances (avec dev deps pour générer Prisma)
-RUN npm ci
+RUN npm ci || npm install
 
 # Générer Prisma client AVEC les nouveaux binary targets
 RUN npx prisma generate

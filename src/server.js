@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Dossier d’upload (adapte au tien si nécessaire)
+// Dossier uploads (adapte si besoin)
 const galleryUploadDir = path.join(__dirname, '../uploads/vehicles');
 fs.mkdirSync(galleryUploadDir, { recursive: true });
 
-// Stockage Multer
+// Multer storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, galleryUploadDir),
   filename: (req, file, cb) => {
@@ -23,11 +23,11 @@ const storage = multer.diskStorage({
   },
 });
 
-// Utilisation de Multer (corrige la variable qui plantait à la ligne 19)
 const uploadGallery = multer({ storage });
 
 // Remplace les require locaux par des import avec .js
 import finance from './finance.js';
+app.use('/api/finance', finance);
 // import autreRouter from './autre-router.js'
 
 // Local modules
@@ -1790,7 +1790,7 @@ app.get('/admin/retro-reports', requireAuth, async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
     
-    console.log(`✅ ${reports.length} RétroReports récupérés de Railway`);
+    console.log(`✅ ${reports.length} RétroReports récupérés`);
     res.json({ 
       reports,
       environment: 'Railway Production',
@@ -2183,7 +2183,7 @@ app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
 
 app.put('/api/retro-reports/:id/status', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
-  try {
+ try {
     const { id } = req.params;
     const { status } = req.body;
 
@@ -2860,14 +2860,14 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
     console.log('✅ Membre désactivé:', deletedMember.matricule);
     res.json({ 
       message: 'Membre désactivé avec succès',
+      message: 'Membre désactivé avec succès',
       member: deletedMember 
-    });
-    
+    });catch (error) {
+    ❌ Erreur suppression membre:', error);
   } catch (error) {
-    console.error('❌ Erreur suppression membre:', error);
+    console.error('❌ Erreur suppression membre:', error);r',
     res.status(500).json({ 
       error: 'Erreur serveur',
       message: error.message 
-    });
-  }
+    });  }
 });
