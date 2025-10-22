@@ -1810,7 +1810,7 @@ app.post('/admin/retro-reports', requireAuth, async (req, res) => {
   console.log('📦 Body:', req.body);
   
   try {
-    const { title, description, category, priority, type } = req.body;
+    const { title, description, priority, category, type } = req.body;
     
     if (!title || !description) {
       console.log('❌ Validation échouée sur Railway');
@@ -1975,434 +1975,262 @@ app.get('/admin/retro-reports/debug', requireAuth, async (req, res) => {
 
 // ========== FIN ENDPOINTS RETROREPORTS RAILWAY ==========
 
-// Ajouter ces endpoints après les endpoints existants (vers la ligne 2500)
+// Ajouter ces endpoints APRÈS la ligne 2400 (vers la fin du fichier, avant app.listen)
 
-// ========== ENDPOINTS MEMBRES (CRUD) ==========
-
-// Transformer un membre pour la réponse API
-function transformMember(member) {
-  if (!member) return null;
-  
-  return {
-    id: member.id,
-    firstName: member.firstName,
-    lastName: member.lastName,
-    email: member.email,
-    phone: member.phone,
-    address: member.address,
-    city: member.city,
-    postalCode: member.postalCode,
-    birthDate: member.birthDate,
-    
-    // Adhésion
-    membershipType: member.membershipType,
-    membershipStatus: member.membershipStatus,
-    joinDate: member.joinDate,
-    renewalDate: member.renewalDate,
-    paymentAmount: member.paymentAmount,
-    paymentMethod: member.paymentMethod,
-    
-    // Rôles et accès
-    role: member.role,
-    hasExternalAccess: member.hasExternalAccess,
-    hasInternalAccess: member.hasInternalAccess,
-    newsletter: member.newsletter,
-    
-    // MyRBE
-    matricule: member.matricule,
-    loginEnabled: member.loginEnabled,
-    temporaryPassword: member.temporaryPassword,
-    mustChangePassword: member.mustChangePassword,
-    lastLoginAt: member.lastLoginAt,
-    
-    // Conduite
-    driverLicense: member.driverLicense,
-    licenseExpiryDate: member.licenseExpiryDate,
-    medicalCertificateDate: member.medicalCertificateDate,
-    emergencyContact: member.emergencyContact,
-    emergencyPhone: member.emergencyPhone,
-    driverCertifications: parseJsonField(member.driverCertifications) || [],
-    vehicleAuthorizations: parseJsonField(member.vehicleAuthorizations) || [],
-    maxPassengers: member.maxPassengers,
-    driverNotes: member.driverNotes,
-    
-    // Divers
-    notes: member.notes,
-    createdAt: member.createdAt,
-    updatedAt: member.updatedAt
-  };
-}
-
-// GET /api/members - Lister tous les membres
-app.get('/api/members', requireAuth, async (req, res) => {
+// ========== ENDPOINTS API RETRO-REPORTS ==========
+app.get('/api/retro-reports', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
-    console.log('📋 Récupération liste des membres');
-    
-    const { status, limit, search } = req.query;
-    
-    const where = {};
-    if (status && status !== 'ALL') {
-      where.membershipStatus = status;
-    }
-    
-    if (search) {
-      const searchTerm = search.trim();
-      where.OR = [
-        { firstName: { contains: searchTerm, mode: 'insensitive' } },
-        { lastName: { contains: searchTerm, mode: 'insensitive' } },
-        { email: { contains: searchTerm, mode: 'insensitive' } },
-        { matricule: { contains: searchTerm, mode: 'insensitive' } }
-      ];
-    }
-    
-    const options = {
-      where,
+    const reports = await prisma.retroReport.findMany({
+      include: {
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: { nom: true, prenom: true, email: true }
+            }
+          }
+        }
+      },
       orderBy: { createdAt: 'desc' }
-    };
-    
-    if (limit) {
-      options.take = parseInt(limit, 10);
-    }
-    
-    const members = await prisma.member.findMany(options);
-    
-    console.log(`✅ ${members.length} membres récupérés`);
-    res.json({
-      members: members.map(transformMember),
-      total: members.length
     });
-    
+    res.json(reports);
   } catch (error) {
-    console.error('❌ Erreur récupération membres:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la récupération des membres',
-      message: error.message 
-    });
+    console.error('Erreur récupération retro reports:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// GET /api/members/:id - Récupérer un membre par ID
-app.get('/api/members/:id', requireAuth, async (req, res) => {
+app.post('/api/retro-reports', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
-    const { id } = req.params;
+    const { title, description, priority, category, impact, steps } = req.body;
     
-    const member = await prisma.member.findUnique({
-      where: { id }
-    });
-    
-    if (!member) {
-      return res.status(404).json({ error: 'Membre non trouvé' });
+    if (!title || !description) {
+      return res.status(400).json({ error: 'Titre et description requis' });
     }
-    
-    res.json({
-      member: transformMember(member)
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur récupération membre:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la récupération du membre',
-      message: error.message 
-    });
-  }
-});
 
-// POST /api/members - Créer un nouveau membre
-app.post('/api/members', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    console.log('👤 Création nouveau membre:', req.body);
-    
-    const {
-      firstName, lastName, email, phone, address, city, postalCode, birthDate,
-      membershipType, membershipStatus, joinDate, renewalDate, paymentAmount, paymentMethod,
-      role, hasExternalAccess, hasInternalAccess, newsletter,
-      matricule, loginEnabled, temporaryPassword, mustChangePassword,
-      driverLicense, licenseExpiryDate, medicalCertificateDate,
-      emergencyContact, emergencyPhone, driverCertifications, vehicleAuthorizations,
-      maxPassengers, driverNotes, notes
-    } = req.body;
-    
-    // Validation des champs requis
-    if (!firstName || !lastName || !email) {
-      return res.status(400).json({ 
-        error: 'Prénom, nom et email sont requis' 
-      });
-    }
-    
-    // Vérifier unicité de l'email
-    const existingEmail = await prisma.member.findFirst({
-      where: { email }
-    });
-    
-    if (existingEmail) {
-      return res.status(400).json({ 
-        error: 'Un membre avec cet email existe déjà' 
-      });
-    }
-    
-    // Vérifier unicité du matricule si fourni
-    if (matricule) {
-      const existingMatricule = await prisma.member.findFirst({
-        where: { matricule }
-      });
-      
-      if (existingMatricule) {
-        return res.status(400).json({ 
-          error: 'Un membre avec ce matricule existe déjà' 
-        });
-      }
-    }
-    
-    // Créer le membre
-    const memberData = {
-      firstName,
-      lastName,
-      email,
-      phone,
-      address,
-      city,
-      postalCode,
-      birthDate: birthDate ? new Date(birthDate) : null,
-      
-      membershipType: membershipType || 'STANDARD',
-      membershipStatus: membershipStatus || 'PENDING',
-      joinDate: joinDate ? new Date(joinDate) : new Date(),
-      renewalDate: renewalDate ? new Date(renewalDate) : null,
-      paymentAmount: paymentAmount ? parseFloat(paymentAmount) : null,
-      paymentMethod: paymentMethod || 'HELLOASSO',
-      
-      role: role || 'MEMBER',
-      hasExternalAccess: !!hasExternalAccess,
-      hasInternalAccess: !!hasInternalAccess,
-      newsletter: newsletter !== false,
-      
-      matricule,
-      loginEnabled: !!loginEnabled,
-      temporaryPassword,
-      mustChangePassword: !!mustChangePassword,
-      
-      driverLicense,
-      licenseExpiryDate: licenseExpiryDate ? new Date(licenseExpiryDate) : null,
-      medicalCertificateDate: medicalCertificateDate ? new Date(medicalCertificateDate) : null,
-      emergencyContact,
-      emergencyPhone,
-      driverCertifications: stringifyJsonField(driverCertifications),
-      vehicleAuthorizations: stringifyJsonField(vehicleAuthorizations),
-      maxPassengers: maxPassengers ? parseInt(maxPassengers, 10) : null,
-      driverNotes,
-      
-      notes
-    };
-    
-    const member = await prisma.member.create({
-      data: memberData
-    });
-    
-    console.log('✅ Membre créé avec succès:', member.id);
-    res.status(201).json({
-      member: transformMember(member),
-      message: 'Membre créé avec succès'
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur création membre:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la création du membre',
-      message: error.message 
-    });
-  }
-});
-
-// POST /api/members/create-with-login - Créer un membre avec accès login
-app.post('/api/members/create-with-login', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    console.log('👤 Création membre avec login:', req.body);
-    
-    const memberData = { ...req.body };
-    
-    // Forcer l'activation du login et générer un mot de passe temporaire
-    memberData.loginEnabled = true;
-    
-    if (!memberData.temporaryPassword) {
-      // Générer un mot de passe temporaire
-      memberData.temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
-    }
-    
-    memberData.mustChangePassword = true;
-    
-    // Générer un matricule si pas fourni
-    if (!memberData.matricule) {
-      const year = new Date().getFullYear();
-      const count = await prisma.member.count() + 1;
-      memberData.matricule = `RBE${year}${count.toString().padStart(3, '0')}`;
-    }
-    
-    // Utiliser l'endpoint de création standard
-    req.body = memberData;
-    return app._router.handle({ ...req, method: 'POST', url: '/api/members' }, res);
-    
-  } catch (error) {
-    console.error('❌ Erreur création membre avec login:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la création du membre',
-      message: error.message 
-    });
-  }
-});
-
-// PATCH /api/members/:id - Mettre à jour un membre
-app.patch('/api/members/:id', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    const updates = { ...req.body };
-    
-    // Convertir les dates
-    ['birthDate', 'joinDate', 'renewalDate', 'licenseExpiryDate', 'medicalCertificateDate'].forEach(field => {
-      if (updates[field]) {
-        updates[field] = new Date(updates[field]);
-      }
-    });
-    
-    // Convertir les nombres
-    ['paymentAmount', 'maxPassengers'].forEach(field => {
-      if (updates[field]) {
-        updates[field] = parseFloat(updates[field]);
-      }
-    });
-    
-    // Stringifier les objets JSON
-    ['driverCertifications', 'vehicleAuthorizations'].forEach(field => {
-      if (updates[field]) {
-        updates[field] = stringifyJsonField(updates[field]);
-      }
-    });
-    
-    const member = await prisma.member.update({
-      where: { id },
-      data: updates
-    });
-    
-    console.log('✅ Membre mis à jour:', id);
-    res.json({
-      member: transformMember(member),
-      message: 'Membre mis à jour avec succès'
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur mise à jour membre:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la mise à jour du membre',
-      message: error.message 
-    });
-  }
-});
-
-// DELETE /api/members/:id - Supprimer un membre
-app.delete('/api/members/:id', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    
-    await prisma.member.delete({
-      where: { id }
-    });
-    
-    console.log('✅ Membre supprimé:', id);
-    res.json({
-      message: 'Membre supprimé avec succès'
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur suppression membre:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la suppression du membre',
-      message: error.message 
-    });
-  }
-});
-
-// POST /api/members/:id/reset-password - Réinitialiser le mot de passe
-app.post('/api/members/:id/reset-password', requireAuth, async (req, res) => {
-  if (!ensureDB(res)) return;
-  try {
-    const { id } = req.params;
-    
-    // Générer un nouveau mot de passe temporaire
-    const temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
-    
-    const member = await prisma.member.update({
-      where: { id },
+    const report = await prisma.retroReport.create({
       data: {
-        temporaryPassword,
-        mustChangePassword: true,
-        loginAttempts: 0,
-        lockedUntil: null
+        title,
+        description,
+        priority: priority || 'MEDIUM',
+        category: category || 'BUG',
+        impact: impact || 'MINOR',
+        steps: steps || '',
+        status: 'OPEN',
+        reporterId: req.user.id,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      include: {
+        reporter: {
+          select: { nom: true, prenom: true, email: true }
+        },
+        comments: {
+          include: {
+            author: {
+              select: { nom: true, prenom: true, email: true }
+            }
+          }
+        }
       }
     });
-    
-    console.log('✅ Mot de passe réinitialisé pour:', member.matricule);
-    res.json({
-      temporaryPassword,
-      message: 'Mot de passe réinitialisé avec succès'
-    });
-    
+
+    res.status(201).json(report);
   } catch (error) {
-    console.error('❌ Erreur réinitialisation mot de passe:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la réinitialisation',
-      message: error.message 
-    });
+    console.error('Erreur création retro report:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// POST /api/members/:id/toggle-login - Activer/désactiver l'accès login
-app.post('/api/members/:id/toggle-login', requireAuth, async (req, res) => {
+app.get('/api/retro-reports/:id', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { id } = req.params;
-    const { action } = req.body;
-    
-    const updateData = {
-      loginEnabled: action === 'enable'
-    };
-    
-    // Si on active l'accès et qu'il n'y a pas de mot de passe temporaire, en générer un
-    if (action === 'enable') {
-      const existing = await prisma.member.findUnique({ where: { id } });
-      if (!existing?.temporaryPassword) {
-        updateData.temporaryPassword = crypto.randomBytes(4).toString('hex').toUpperCase();
-        updateData.mustChangePassword = true;
+    const report = await prisma.retroReport.findUnique({
+      where: { id: parseInt(id) },
+      include: {
+        reporter: {
+          select: { nom: true, prenom: true, email: true }
+        },
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: { nom: true, prenom: true, email: true }
+            }
+          }
+        }
       }
+    });
+
+    if (!report) {
+      return res.status(404).json({ error: 'Rapport non trouvé' });
     }
-    
-    const member = await prisma.member.update({
-      where: { id },
-      data: updateData
-    });
-    
-    console.log('✅ Accès login modifié pour:', member.matricule);
-    res.json({
-      loginEnabled: member.loginEnabled,
-      temporaryPassword: member.temporaryPassword,
-      message: `Accès ${action === 'enable' ? 'activé' : 'désactivé'} avec succès`
-    });
-    
+
+    res.json(report);
   } catch (error) {
-    console.error('❌ Erreur modification accès login:', error);
-    res.status(500).json({ 
-      error: 'Erreur serveur lors de la modification',
-      message: error.message 
-    });
+    console.error('Erreur récupération retro report:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// ========== FIN ENDPOINTS MEMBRES ==========
+app.put('/api/retro-reports/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { title, description, priority, category, impact, steps, status } = req.body;
+    
+    const report = await prisma.retroReport.update({
+      where: { id: parseInt(id) },
+      data: {
+        ...(title && { title }),
+        ...(description && { description }),
+        ...(priority && { priority }),
+        ...(category && { category }),
+        ...(impact && { impact }),
+        ...(steps && { steps }),
+        ...(status && { status }),
+        updatedAt: new Date()
+      },
+      include: {
+        reporter: {
+          select: { nom: true, prenom: true, email: true }
+        },
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: { nom: true, prenom: true, email: true }
+            }
+          }
+        }
+      }
+    });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
+    res.json(report);
+  } catch (error) {
+    console.error('Erreur mise à jour retro report:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.delete('/api/retro-reports/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    
+    // Supprimer d'abord les commentaires
+    await prisma.retroReportComment.deleteMany({
+      where: { retroReportId: parseInt(id) }
+    });
+    
+    // Puis supprimer le rapport
+    await prisma.retroReport.delete({
+      where: { id: parseInt(id) }
+    });
+
+    res.json({ message: 'Rapport supprimé avec succès' });
+  } catch (error) {
+    console.error('Erreur suppression retro report:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+
+    if (!content) {
+      return res.status(400).json({ error: 'Contenu du commentaire requis' });
+    }
+
+    const comment = await prisma.retroReportComment.create({
+      data: {
+        content,
+        authorId: req.user.id,
+        retroReportId: parseInt(id),
+        createdAt: new Date()
+      },
+      include: {
+        author: {
+          select: { nom: true, prenom: true, email: true }
+        }
+      }
+    });
+
+    // Mettre à jour la date de modification du rapport
+    await prisma.retroReport.update({
+      where: { id: parseInt(id) },
+      data: { updatedAt: new Date() }
+    });
+
+    res.status(201).json(comment);
+  } catch (error) {
+    console.error('Erreur création commentaire:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+app.put('/api/retro-reports/:id/status', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const validStatuses = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Statut invalide' });
+    }
+
+    const report = await prisma.retroReport.update({
+      where: { id: parseInt(id) },
+      data: {
+        status,
+        updatedAt: new Date()
+      },
+      include: {
+        reporter: {
+          select: { nom: true, prenom: true, email: true }
+        },
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: { nom: true, prenom: true, email: true }
+            }
+          }
+        }
+      }
+    });
+
+    res.json(report);
+  } catch (error) {
+    console.error('Erreur mise à jour statut:', error);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ---------- ENDPOINTS ADMINISTRATIFS (PROTECTION PAR ROLE) ----------
+// Exemple de protection par rôle: admin uniquement
+app.use('/admin', requireAuth, (req, res, next) => {
+  if (req.user.type !== 'admin') {
+    return res.status(403).json({ error: 'Accès interdit' });
+  }
+  next();
+});
+
+// Exemple d'endpoint admin
+app.get('/admin/dashboard', (req, res) => {
+  res.json({ message: 'Bienvenue sur le tableau de bord admin' });
+});
+
+// ========== FIN ENDPOINTS API RETRO-REPORTS ==========
+
+// Démarrer le serveur
+app.listen(PORT, () => {
+  console.log(`🚀 Serveur prêt sur http://localhost:${PORT}`);
 });
