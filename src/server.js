@@ -1333,7 +1333,8 @@ app.post('/admin/retro-reports/:id/comments', requireAuth, async (req, res) => {
 
     const comment = await prisma.retroReportComment.create({
       data: {
-        retroReportId: id, // FK
+        // retroReportId: id, // ❌ ancien champ
+        reportId: id,        // ✅ schema: String FK
         message,
         author: req.user?.email || req.user?.matricule || 'system'
       }
@@ -1400,7 +1401,8 @@ app.post('/api/retro-reports/:id/comments', requireAuth, async (req, res) => {
     const { message } = req.body;
     const comment = await prisma.retroReportComment.create({
       data: {
-        reportId: parseInt(id, 10),
+        // reportId: parseInt(id, 10), // ❌ id n’est pas un Int
+        reportId: id,                  // ✅ String cuid
         message,
         author: req.userEmail || 'system'
       }
