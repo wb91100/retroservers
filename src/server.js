@@ -5,27 +5,32 @@ import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import nodemailer from 'nodemailer';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import QRCode from 'qrcode';
+import { PrismaClient } from '@prisma/client';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Dossier uploads (adapte si besoin)
+// Express app DOIT être créé avant tout app.use/app.get
+const app = express();
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
+app.set('trust proxy', 1);
+
+// Dossier uploads (optionnel si memoryStorage)
 const galleryUploadDir = path.join(__dirname, '../uploads/vehicles');
 fs.mkdirSync(galleryUploadDir, { recursive: true });
 
-// Multer storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, galleryUploadDir),
-  filename: (req, file, cb) => {
-    const ts = Date.now();
-    const safe = file.originalname.replace(/[^a-z0-9.\-_]/gi, '_');
-    cb(null, `${ts}-${safe}`);
-  },
+// Multer en mémoire (car tu utilises file.buffer)
+const storage = multer.memoryStorage();
+const uploadGallery = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
-const uploadGallery = multer({ storage });
-
-// Remplace les require locaux par des import avec .js
+// Router Finance (après app)
 import finance from './finance.js';
 app.use('/api/finance', finance);
 // import autreRouter from './autre-router.js'
@@ -146,6 +151,19 @@ function absolutize(p) {
 // ---------- Auth JWT ----------
 const AUTH_SECRET = process.env.AUTH_SECRET || 'dev_insecure_secret';
 const TOKEN_TTL = process.env.TOKEN_TTL || '12h';
+
+// Helpers password
+async function verifyPassword(plain, hashedOrPlain) {
+  // si hash bcrypt (commence par $2) comparer; sinon comparer en clair (cas temporaire)
+  if (typeof hashedOrPlain === 'string' && hashedOrPlain.startsWith('$2')) {
+    return bcrypt.compare(plain, hashedOrPlain);
+  }
+  return plain === hashedOrPlain;
+}
+
+async function hashPassword(plain) {
+  return bcrypt.hash(plain, 10);
+}
 
 function issueToken(payload) {
   return jwt.sign(payload, AUTH_SECRET, { expiresIn: TOKEN_TTL });
@@ -2833,41 +2851,33 @@ app.delete('/api/members/:id', requireAuth, async (req, res) => {
   if (!ensureDB(res)) return;
   try {
     const { id } = req.params;
-    
     console.log('🗑️ Suppression membre:', id);
-    
+
     // Vérifier les droits (seuls les admins peuvent supprimer)
-    const currentUser = await prisma.user.findUnique({ 
-      where: { id: req.userId } 
-    });
-    
-    if (currentUser.role !== 'ADMIN') {
-      return res.status(403).json({ 
+    const currentUser = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!currentUser || currentUser.role !== 'ADMIN') {
+      return res.status(403).json({
         error: 'Accès refusé',
-        message: 'Seuls les administrateurs peuvent supprimer les membres' 
+        message: 'Seuls les administrateurs peuvent supprimer les membres',
       });
     }
-    
+
     // Soft delete : désactiver au lieu de supprimer
     const deletedMember = await prisma.user.update({
       where: { id },
-      data: {
-        isActive: false,
-        updatedAt: new Date()
-      }
+      data: { isActive: false, updatedAt: new Date() },
     });
-    
+
     console.log('✅ Membre désactivé:', deletedMember.matricule);
-    res.json({ 
+    res.json({
       message: 'Membre désactivé avec succès',
-      message: 'Membre désactivé avec succès',
-      member: deletedMember 
-    });catch (error) {
-    ❌ Erreur suppression membre:', error);
+      member: deletedMember,
+    });
   } catch (error) {
-    console.error('❌ Erreur suppression membre:', error);r',
-    res.status(500).json({ 
+    console.error('❌ Erreur suppression membre:', error);
+    res.status(500).json({
       error: 'Erreur serveur',
-      message: error.message 
-    });  }
+      message: error.message,
+    });
+  }
 });
