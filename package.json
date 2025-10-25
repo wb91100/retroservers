@@ -9,7 +9,8 @@
     "prisma:push": "prisma db push",
     "seed": "node prisma/seed.js",
     "start": "node ./src/server.js",
-    "start:fresh": "npm run prisma:generate && npm run prisma:push && npm run seed && node ./src/server.js"
+    "start:fresh": "npm run prisma:generate && npm run prisma:push && npm run seed && node ./src/server.js",
+    "create:fake-vehicle": "node ./src/create-fake-vehicle.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
