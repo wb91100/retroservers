@@ -7,6 +7,7 @@ let balanceHistory = [];
 let transactions = [];
 let scheduledOps = [];
 let nextId = 1;
+let expenseReports = [];
 
 // GET current balance
 router.get('/balance', (_req, res) => {
@@ -155,6 +156,61 @@ router.patch('/scheduled-operations/:id', (req, res) => {
     return res.json(op);
   } catch (err) {
     return res.status(500).json({ message: 'Server error', error: String(err?.message || err) });
+  }
+});
+
+// -------- Expense Reports (Notes de frais) (in-memory) --------
+// Shape: { id, description, amount, date, status, createdBy }
+router.get('/expense-reports', (req, res) => {
+  const list = [...expenseReports].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+  res.json({ reports: list });
+});
+
+router.post('/expense-reports', (req, res) => {
+  try {
+    const { description, amount, date } = req.body || {};
+    if (!description) return res.status(400).json({ message: 'Description requise' });
+    const value = parseFloat(amount);
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: 'Montant invalide' });
+    const report = {
+      id: String(nextId++),
+      description: String(description),
+      amount: value,
+      date: date ? new Date(date).toISOString() : new Date().toISOString(),
+      status: 'SUBMITTED',
+      createdAt: new Date().toISOString()
+    };
+    expenseReports.unshift(report);
+    res.status(201).json({ report });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: String(err?.message || err) });
+  }
+});
+
+router.patch('/expense-reports/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const idx = expenseReports.findIndex(r => String(r.id) === String(id));
+    if (idx === -1) return res.status(404).json({ message: 'Note de frais introuvable' });
+    if (status && ['SUBMITTED','APPROVED','REJECTED','PAID'].includes(String(status).toUpperCase())) {
+      expenseReports[idx].status = String(status).toUpperCase();
+    }
+    return res.json({ report: expenseReports[idx] });
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: String(err?.message || err) });
+  }
+});
+
+router.delete('/expense-reports/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const before = expenseReports.length;
+    expenseReports = expenseReports.filter(r => String(r.id) !== String(id));
+    if (expenseReports.length === before) return res.status(404).json({ message: 'Note de frais introuvable' });
+    return res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ message: 'Erreur serveur', error: String(err?.message || err) });
   }
 });
 

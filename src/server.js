@@ -10,6 +10,7 @@ import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import QRCode from 'qrcode';
+import PDFDocument from 'pdfkit';
 
 // ---------------- Paths / App ----------------
 const __filename = fileURLToPath(import.meta.url);
@@ -1656,6 +1657,74 @@ app.post('/api/finance/simulations/:id/run', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('❌ Erreur exécution simulation:', error);
     res.status(500).json({ error: 'Erreur serveur', message: error.message });
+  }
+});
+
+// Delete a simulation scenario
+app.delete('/api/finance/simulations/:id', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    // Delete child items first due to FK
+    await prisma.financeSimulationIncomeItem.deleteMany({ where: { scenarioId: id } });
+    await prisma.financeSimulationExpenseItem.deleteMany({ where: { scenarioId: id } });
+    await prisma.financeSimulationScenario.delete({ where: { id } });
+    res.status(204).end();
+  } catch (error) {
+    console.error('❌ Erreur suppression scénario:', error);
+    res.status(500).json({ error: 'Erreur serveur', message: error.message });
+  }
+});
+
+// Generate a simple PDF report for a simulation scenario
+app.get('/api/finance/simulations/:id/report.pdf', requireAuth, async (req, res) => {
+  if (!ensureDB(res)) return;
+  try {
+    const { id } = req.params;
+    const scenario = await prisma.financeSimulationScenario.findUnique({
+      where: { id },
+      include: { incomeItems: true, expenseItems: true }
+    });
+    if (!scenario) return res.status(404).json({ error: 'Scénario non trouvé' });
+
+    const monthlyIncome = scenario.incomeItems.reduce((sum, item) => sum + (item.amount * getFrequencyMultiplier(item.frequency)), 0);
+    const monthlyExpenses = scenario.expenseItems.reduce((sum, item) => sum + (item.amount * getFrequencyMultiplier(item.frequency)), 0);
+    const latestBalance = await prisma.financeBalance.findFirst({ orderBy: { createdAt: 'desc' } }).catch(() => null);
+    const currentBalance = latestBalance?.balance || 0;
+    const monthlyNet = monthlyIncome - monthlyExpenses;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="simulation-${scenario.name?.replace(/[^a-z0-9-_]+/gi,'_') || id}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(18).text('Rapport de Simulation Financière', { underline: true });
+    doc.moveDown();
+    doc.fontSize(12).text(`Scénario: ${scenario.name}`);
+    doc.text(`Description: ${scenario.description || '-'}`);
+    doc.text(`Projection (mois): ${scenario.projectionMonths}`);
+    doc.text(`Solde actuel: ${currentBalance.toFixed(2)} €`);
+    doc.moveDown();
+    doc.text(`Revenus mensuels: +${monthlyIncome.toFixed(2)} €`);
+    doc.text(`Dépenses mensuelles: -${monthlyExpenses.toFixed(2)} €`);
+    doc.text(`Résultat mensuel: ${(monthlyNet>=0?'+':'')}${monthlyNet.toFixed(2)} €`);
+    doc.moveDown();
+
+    doc.text('Recettes:', { underline: true });
+    scenario.incomeItems.forEach(it => {
+      doc.text(`• ${it.description} — ${it.amount.toFixed(2)} € (${it.frequency})`);
+    });
+    doc.moveDown();
+    doc.text('Dépenses:', { underline: true });
+    scenario.expenseItems.forEach(it => {
+      doc.text(`• ${it.description} — ${it.amount.toFixed(2)} € (${it.frequency})`);
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error('❌ Erreur génération PDF:', error);
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur serveur', message: error.message });
   }
 });
 
