@@ -1,9 +1,12 @@
 import { Router } from 'express';
 const router = Router();
 
-// In-memory state (simple dev stub)
+// In-memory state (simple dev stub for finance)
 let currentBalance = 0;
 let balanceHistory = [];
+let transactions = [];
+let scheduledOps = [];
+let nextId = 1;
 
 // GET current balance
 router.get('/balance', (_req, res) => {
@@ -52,8 +55,107 @@ router.post('/balance/configure', (req, res) => {
   }
 });
 
-// Stubs
-router.get('/scheduled-operations', (_req, res) => res.json({ operations: [] }));
-router.get('/transactions', (_req, res) => res.json({ transactions: [] }));
+// -------- Transactions (in-memory) --------
+router.get('/transactions', (_req, res) => {
+  // Return newest first
+  const list = [...transactions].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+  res.json({ transactions: list });
+});
+
+router.post('/transactions', (req, res) => {
+  try {
+    const { type, amount, description, category, date } = req.body || {};
+    const normType = String(type || '').toUpperCase();
+    if (!['CREDIT', 'DEBIT'].includes(normType)) return res.status(400).json({ message: 'Invalid type' });
+    const value = parseFloat(amount);
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    if (!description) return res.status(400).json({ message: 'Description required' });
+
+    const tx = {
+      id: String(nextId++),
+      type: normType,
+      amount: value,
+      description: String(description),
+      category: category || 'AUTRE',
+      date: date ? new Date(date).toISOString() : new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+    transactions.unshift(tx);
+
+    // Update balance
+    currentBalance += normType === 'CREDIT' ? value : -value;
+
+    return res.status(201).json({ transaction: tx, balance: currentBalance });
+  } catch (err) {
+    return res.status(500).json({ message: 'Server error', error: String(err?.message || err) });
+  }
+});
+
+// -------- Scheduled operations (in-memory) --------
+router.get('/scheduled-operations', (_req, res) => {
+  const ops = [...scheduledOps].sort((a, b) => new Date(a.nextDate || 0) - new Date(b.nextDate || 0));
+  res.json({ operations: ops });
+});
+
+router.post('/scheduled-operations', (req, res) => {
+  try {
+    const { type, amount, description, frequency, nextDate } = req.body || {};
+    const normType = String(type || '').toUpperCase();
+    if (!['SCHEDULED_PAYMENT', 'SCHEDULED_CREDIT'].includes(normType)) {
+      return res.status(400).json({ message: 'Invalid scheduled operation type' });
+    }
+    const value = parseFloat(amount);
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    if (!description) return res.status(400).json({ message: 'Description required' });
+    const freq = String(frequency || 'MONTHLY').toUpperCase();
+    if (!['MONTHLY', 'WEEKLY', 'QUARTERLY', 'YEARLY'].includes(freq)) {
+      return res.status(400).json({ message: 'Invalid frequency' });
+    }
+
+    const op = {
+      id: String(nextId++),
+      type: normType,
+      amount: value,
+      description: String(description),
+      frequency: freq,
+      nextDate: nextDate ? new Date(nextDate).toISOString() : new Date().toISOString(),
+      isActive: true,
+      createdAt: new Date().toISOString()
+    };
+    scheduledOps.push(op);
+    return res.status(201).json(op);
+  } catch (err) {
+    return res.status(500).json({ message: 'Server error', error: String(err?.message || err) });
+  }
+});
+
+router.patch('/scheduled-operations/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive, nextDate, description, amount, frequency, type } = req.body || {};
+    const idx = scheduledOps.findIndex(op => String(op.id) === String(id));
+    if (idx === -1) return res.status(404).json({ message: 'Operation not found' });
+    const op = scheduledOps[idx];
+    if (typeof isActive === 'boolean') op.isActive = isActive;
+    if (nextDate !== undefined) op.nextDate = nextDate ? new Date(nextDate).toISOString() : op.nextDate;
+    if (description !== undefined) op.description = String(description);
+    if (amount !== undefined) {
+      const val = parseFloat(amount);
+      if (Number.isFinite(val) && val > 0) op.amount = val;
+    }
+    if (frequency !== undefined) {
+      const f = String(frequency || '').toUpperCase();
+      if (['MONTHLY', 'WEEKLY', 'QUARTERLY', 'YEARLY'].includes(f)) op.frequency = f;
+    }
+    if (type !== undefined) {
+      const t = String(type || '').toUpperCase();
+      if (['SCHEDULED_PAYMENT', 'SCHEDULED_CREDIT'].includes(t)) op.type = t;
+    }
+    scheduledOps[idx] = op;
+    return res.json(op);
+  } catch (err) {
+    return res.status(500).json({ message: 'Server error', error: String(err?.message || err) });
+  }
+});
 
 export default router;
