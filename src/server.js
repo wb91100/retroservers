@@ -19,6 +19,10 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 app.set('trust proxy', 1);
 
+// Parsers early so all routers (including finance) get req.body
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
 // ---------------- Uploads ----------------
 const galleryUploadDir = path.join(__dirname, '../uploads/vehicles');
 fs.mkdirSync(galleryUploadDir, { recursive: true });

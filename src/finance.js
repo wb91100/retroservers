@@ -27,7 +27,8 @@ router.get('/balance/history', (_req, res) => {
 router.post('/balance/configure', (req, res) => {
   try {
     const { code, newBalance, reason } = req.body || {};
-    if (!code || String(code) !== '0920') {
+    const normalized = String(code ?? '').padStart(4, '0');
+    if (normalized !== '0920') {
       return res.status(401).json({ message: 'Invalid security code' });
     }
     const parsed = parseFloat(newBalance);
